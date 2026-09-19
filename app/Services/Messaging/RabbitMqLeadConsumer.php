@@ -4,6 +4,9 @@ namespace App\Services\Messaging;
 
 use App\Contracts\MessagePublisher;
 use App\Enums\MessageHandleResult;
+use App\Observability\InMemoryMetricsRegistry;
+use App\Observability\TraceContext;
+use App\Observability\Tracing;
 use App\Services\LeadMessageHandler;
 use PhpAmqpLib\Connection\AMQPStreamConnection;
 use PhpAmqpLib\Exception\AMQPTimeoutException;
@@ -17,6 +20,8 @@ class RabbitMqLeadConsumer
     public function __construct(
         private LeadMessageHandler $handler,
         private MessagePublisher $publisher,
+        private Tracing $tracing,
+        private InMemoryMetricsRegistry $metrics,
     ) {}
 
     /**
@@ -85,24 +90,48 @@ class RabbitMqLeadConsumer
         /** @var array<string, mixed> $body */
         $body = json_decode($message->getBody(), true) ?? [];
         $attempts = $this->attemptCount($message);
+        $headers = $this->messageHeaders($message);
 
-        $result = $this->handler->handle($body, $attempts);
+        $parent = TraceContext::fromMessageHeaders($headers)
+            ?? TraceContext::fromTraceparent(
+                isset($body['payload']['traceparent']) ? (string) $body['payload']['traceparent'] : null,
+            );
 
-        if ($result === MessageHandleResult::Retry) {
-            $this->publisher->publishRetry($body, [
-                'x-attempts' => $attempts + 1,
+        return $this->tracing->run(
+            'lead.consume',
+            $parent,
+            function (TraceContext $span) use ($body, $attempts): MessageHandleResult {
+                /** @var array<string, mixed> $payload */
+                $payload = is_array($body['payload'] ?? null) ? $body['payload'] : [];
+                $this->tracing->withTenant(isset($payload['tenant_id']) ? (string) $payload['tenant_id'] : null);
+
+                $result = $this->handler->handle($body, $attempts);
+
+                if ($result === MessageHandleResult::Retry) {
+                    $this->publisher->publishRetry($body, array_merge([
+                        'x-attempts' => $attempts + 1,
+                        'outbox_id' => (string) ($body['outbox_id'] ?? ''),
+                    ], $span->toMessageHeaders()));
+                }
+
+                if ($result === MessageHandleResult::Dlq) {
+                    $this->publisher->publishDlq($body, array_merge([
+                        'x-attempts' => $attempts + 1,
+                        'outbox_id' => (string) ($body['outbox_id'] ?? ''),
+                    ], $span->toMessageHeaders()));
+                }
+
+                $this->metrics->incrementCounter('eventflow_leads_consumed_total', [
+                    'result' => $result->value,
+                ]);
+
+                return $result;
+            },
+            [
                 'outbox_id' => (string) ($body['outbox_id'] ?? ''),
-            ]);
-        }
-
-        if ($result === MessageHandleResult::Dlq) {
-            $this->publisher->publishDlq($body, [
-                'x-attempts' => $attempts + 1,
-                'outbox_id' => (string) ($body['outbox_id'] ?? ''),
-            ]);
-        }
-
-        return $result;
+                'attempts' => $attempts,
+            ],
+        );
     }
 
     public function __destruct()
@@ -112,18 +141,24 @@ class RabbitMqLeadConsumer
         }
     }
 
-    private function attemptCount(AMQPMessage $message): int
+    /**
+     * @return array<string, mixed>
+     */
+    private function messageHeaders(AMQPMessage $message): array
     {
         $props = $message->get_properties();
         $headers = $props['application_headers'] ?? null;
 
         if ($headers instanceof AMQPTable) {
-            $native = $headers->getNativeData();
-
-            return (int) ($native['x-attempts'] ?? 0);
+            return $headers->getNativeData();
         }
 
-        return 0;
+        return [];
+    }
+
+    private function attemptCount(AMQPMessage $message): int
+    {
+        return (int) ($this->messageHeaders($message)['x-attempts'] ?? 0);
     }
 
     private function connection(): AMQPStreamConnection

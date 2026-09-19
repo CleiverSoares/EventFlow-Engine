@@ -4,6 +4,8 @@ namespace Tests\Unit;
 
 use App\Contracts\MessagePublisher;
 use App\Enums\MessageHandleResult;
+use App\Observability\InMemoryMetricsRegistry;
+use App\Observability\Tracing;
 use App\Services\LeadMessageHandler;
 use App\Services\Messaging\RabbitMqLeadConsumer;
 use Mockery;
@@ -26,7 +28,8 @@ class RabbitMqLeadConsumerTest extends TestCase
             ->once()
             ->withArgs(function (array $body, array $headers): bool {
                 return ($body['outbox_id'] ?? null) === 'ob-1'
-                    && ($headers['x-attempts'] ?? null) === 2;
+                    && ($headers['x-attempts'] ?? null) === 2
+                    && isset($headers['traceparent']);
             });
         $publisher->shouldNotReceive('publishDlq');
 
@@ -37,7 +40,12 @@ class RabbitMqLeadConsumerTest extends TestCase
             'application_headers' => new AMQPTable(['x-attempts' => 1]),
         ]);
 
-        $consumer = new RabbitMqLeadConsumer($handler, $publisher);
+        $consumer = new RabbitMqLeadConsumer(
+            $handler,
+            $publisher,
+            app(Tracing::class),
+            app(InMemoryMetricsRegistry::class),
+        );
         $result = $consumer->handleMessage($message);
 
         $this->assertSame(MessageHandleResult::Retry, $result);
@@ -57,7 +65,12 @@ class RabbitMqLeadConsumerTest extends TestCase
             'payload' => [],
         ], JSON_THROW_ON_ERROR));
 
-        $consumer = new RabbitMqLeadConsumer($handler, $publisher);
+        $consumer = new RabbitMqLeadConsumer(
+            $handler,
+            $publisher,
+            app(Tracing::class),
+            app(InMemoryMetricsRegistry::class),
+        );
 
         $this->assertSame(MessageHandleResult::Dlq, $consumer->handleMessage($message));
     }

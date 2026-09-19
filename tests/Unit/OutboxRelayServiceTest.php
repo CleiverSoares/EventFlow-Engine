@@ -5,6 +5,8 @@ namespace Tests\Unit;
 use App\Contracts\MessagePublisher;
 use App\Enums\OutboxStatus;
 use App\Models\OutboxEvent;
+use App\Observability\InMemoryMetricsRegistry;
+use App\Observability\Tracing;
 use App\Repositories\OutboxEventRepository;
 use App\Services\OutboxRelayService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -24,7 +26,12 @@ class OutboxRelayServiceTest extends TestCase
         $publisher = Mockery::mock(MessagePublisher::class);
         $publisher->shouldReceive('publish')->once();
 
-        $service = new OutboxRelayService(app(OutboxEventRepository::class), $publisher);
+        $service = new OutboxRelayService(
+            app(OutboxEventRepository::class),
+            $publisher,
+            app(Tracing::class),
+            app(InMemoryMetricsRegistry::class),
+        );
         $result = $service->relayBatch(10);
 
         $this->assertSame(1, $result['claimed']);
@@ -42,7 +49,12 @@ class OutboxRelayServiceTest extends TestCase
         $publisher = Mockery::mock(MessagePublisher::class);
         $publisher->shouldReceive('publish')->once()->andThrow(new RuntimeException('broker down'));
 
-        $service = new OutboxRelayService(app(OutboxEventRepository::class), $publisher);
+        $service = new OutboxRelayService(
+            app(OutboxEventRepository::class),
+            $publisher,
+            app(Tracing::class),
+            app(InMemoryMetricsRegistry::class),
+        );
         $result = $service->relayBatch(10);
 
         $fresh = $event->fresh();
