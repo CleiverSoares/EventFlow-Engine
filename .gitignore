@@ -30,4 +30,5 @@ Thumbs.db
 # Personal / planning docs — do not commit
 projeto.md
 *.local.md
-/docs/private/
+/docs/
+
