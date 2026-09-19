@@ -1,13 +1,7 @@
 #!/bin/sh
-# Block direct commits on main/master. Work on a feature/chore branch instead.
 branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
-
 if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
-  echo ""
-  echo "ERROR: commits on '$branch' are blocked."
-  echo "Create a branch first, e.g.:  git switch -c chore/minha-tarefa"
-  echo ""
+  echo "ERROR: commits on '$branch' are blocked. Use a feature/chore branch."
   exit 1
 fi
-
 exit 0
