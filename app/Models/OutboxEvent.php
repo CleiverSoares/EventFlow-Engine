@@ -8,8 +8,9 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['aggregate_type', 'payload', 'status', 'attempts'])]
+#[Fillable(['tenant_id', 'aggregate_type', 'payload', 'status', 'attempts', 'idempotency_key'])]
 class OutboxEvent extends Model
 {
     /** @use HasFactory<OutboxEventFactory> */
@@ -33,5 +34,13 @@ class OutboxEvent extends Model
             'status' => OutboxStatus::class,
             'attempts' => 'integer',
         ];
+    }
+
+    /**
+     * @return BelongsTo<Tenant, $this>
+     */
+    public function tenant(): BelongsTo
+    {
+        return $this->belongsTo(Tenant::class);
     }
 }

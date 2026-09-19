@@ -4,6 +4,7 @@ namespace Database\Factories;
 
 use App\Enums\OutboxStatus;
 use App\Models\OutboxEvent;
+use App\Models\Tenant;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
@@ -20,6 +21,7 @@ class OutboxEventFactory extends Factory
     {
         return [
             'aggregate_type' => 'lead.incoming',
+            'tenant_id' => Tenant::factory(),
             'payload' => [
                 'cnpj' => fake()->numerify('##############'),
                 'name' => fake()->company(),
@@ -28,6 +30,7 @@ class OutboxEventFactory extends Factory
             ],
             'status' => OutboxStatus::Pending,
             'attempts' => 0,
+            'idempotency_key' => null,
         ];
     }
 

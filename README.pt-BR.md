@@ -141,7 +141,25 @@ Publicar no RabbitMQ *dentro* do request HTTP sozinho pode perder mensagem se o 
 
 - Fila RabbitMQ de **retry** (TTL → main) e **DLQ** para mensagens venenosas  
 - **Circuit breaker** (closed / open / half-open) em webhook + enrichment HTTP  
-- **traceparent** W3C propagado HTTP → outbox → AMQP → consumer → Jaeger (OTLP)
+- **traceparent** W3C propagado HTTP → outbox → AMQP → consumer → Jaeger (OTLP)  
+- **Idempotency-Key** no ingest (phase2) — a mesma key devolve o mesmo `outbox_id`  
+- **Backpressure do outbox** — `EVENTFLOW_OUTBOX_MAX_PENDING*` opcional → HTTP `503` se o backlog estourar  
+- **Retenção do outbox** — `php artisan eventflow:prune-outbox` (agendado diário) apaga `PROCESSED` antigos  
+
+### API de leitura do pipeline (por tenant)
+
+Ver leads entrando/saindo do pipe (não só agregados no Grafana):
+
+| Método | Path | Notas |
+|--------|------|--------|
+| `GET` | `/api/outbox` | Paginado; `?status=PENDING` |
+| `GET` | `/api/outbox/{id}` | Evento único |
+| `GET` | `/api/audit-logs` | Paginado; `?status=DISPATCHED` |
+| `GET` | `/api/audit-logs/{id}` | Audit único |
+| `GET` | `/api/health` | Readiness DB + Redis + RabbitMQ |
+| `GET` | `/api/metrics` | Texto Prometheus — exige `EVENTFLOW_METRICS_TOKEN` (Bearer / `X-Metrics-Token` / `?token=`) |
+
+Rotas de tenant continuam pedindo `X-Api-Key`.
 
 ### Evidência (Phase 2)
 
@@ -186,7 +204,8 @@ As API keys de demo (após o seed) estão comentadas no `.env.example`.
 | Prometheus | http://localhost:9090 |
 | Jaeger | http://localhost:16686 |
 | RabbitMQ UI | http://localhost:15672 (`eventflow` / `eventflow`) |
-| Métricas da app | http://localhost:8000/api/metrics |
+| Métricas da app | http://localhost:8000/api/metrics (Bearer `EVENTFLOW_METRICS_TOKEN`) |
+| Health da app | http://localhost:8000/api/health |
 
 Detalhes: [`observability/README.md`](observability/README.md).
 
@@ -214,7 +233,7 @@ k6 run -o experimental-prometheus-rw ^
   -e TARGET_RPS=80 -e DURATION=20s -e PRE_VUS=40 -e MAX_VUS=200 k6/phase2-ingest.js
 ```
 
-Os screenshots de evidência usaram `TARGET_RPS=80` com outbox limpo (sem backlog de vários runs). Alvos maiores funcionam até o backlog Postgres/outbox saturar a latência — limpe linhas `PENDING` ou espere o relay drenar entre demos.
+Os screenshots de evidência usaram `TARGET_RPS=80` com outbox limpo (sem backlog de vários runs). Alvos maiores funcionam até o backlog Postgres/outbox saturar a latência — espere o relay drenar, ative caps de backpressure, ou rode `php artisan eventflow:prune-outbox` para `PROCESSED` antigos (**não** apague `PENDING` em produção).
 
 Workers + API rodam no Docker (PHP 64-bit). `php artisan serve` no host serve só pra smoke — não pra k6 com centenas de RPS.
 
@@ -231,22 +250,28 @@ php artisan test
 ```http
 POST /api/leads
 X-Api-Key: <tenant api_key>
+Idempotency-Key: <chave-opcional-estavel>
 Content-Type: application/json
 
 { "cnpj": "00000000000191", "name": "Acme", "lat": -23.55, "lng": -46.63 }
 ```
 
 - Phase 1 → `201` + `audit_id`  
-- Phase 2 → `202` + `outbox_id`  
-- Key inválida → `401` · validação → `422` · rate limit (phase2) → `429`
+- Phase 2 → `202` + `outbox_id` (`idempotent_replay: true` se a key já existia)  
+- Key inválida → `401` · validação → `422` · rate limit (phase2) → `429` · backpressure do outbox → `503`
+
+```http
+GET /api/outbox?status=PENDING
+X-Api-Key: <tenant api_key>
+```
 
 ---
 
 ## Tabelas de domínio
 
 - `tenants` — UUID, `api_key` (indexado), plan `basic` \| `pro` \| `enterprise`  
-- `outbox_events` — payload JSONB, status `PENDING` \| `PROCESSING` \| `PROCESSED` \| `FAILED`, `attempts`  
-- `audit_logs` — JSONB enriquecido, status `SUCCESS` \| `DISPATCHED` \| `ERROR`
+- `outbox_events` — `tenant_id`, payload JSONB, `idempotency_key` opcional, status `PENDING` \| `PROCESSING` \| `PROCESSED` \| `FAILED`, `attempts`  
+- `audit_logs` — `tenant_id`, JSONB enriquecido, status `SUCCESS` \| `DISPATCHED` \| `ERROR`
 
 ---
 
