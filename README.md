@@ -2,11 +2,9 @@
 
 Multi-tenant platform for mass lead/event **ingest → enrich → dispatch**, built with Laravel.
 
-This branch brings the **foundation**: Docker (Postgres, Redis, RabbitMQ), `config/eventflow.php`, CSR skeleton, and smoke tests.
+This repo currently has the **foundation**: Docker (Postgres, Redis, RabbitMQ), `config/eventflow.php`, CSR skeleton, and smoke tests.
 
 ## Quick start
-
-See [docs/dev-setup.md](docs/dev-setup.md).
 
 ```bash
 docker compose up -d
