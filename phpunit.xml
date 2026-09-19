@@ -33,5 +33,6 @@
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
         <env name="EVENTFLOW_MODE" value="phase1"/>
+        <env name="EVENTFLOW_TRACING_ENABLED" value="false"/>
     </php>
 </phpunit>

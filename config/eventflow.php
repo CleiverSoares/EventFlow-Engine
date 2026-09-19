@@ -113,4 +113,16 @@ return [
         'batch_size' => (int) env('EVENTFLOW_OUTBOX_BATCH_SIZE', 100),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Tracing (W3C Trace Context + OTLP HTTP → Jaeger)
+    |--------------------------------------------------------------------------
+    */
+
+    'tracing' => [
+        'enabled' => (bool) env('EVENTFLOW_TRACING_ENABLED', true),
+        'otlp_endpoint' => env('EVENTFLOW_OTLP_ENDPOINT', 'http://127.0.0.1:4318/v1/traces'),
+        'service_name' => env('EVENTFLOW_SERVICE_NAME', 'eventflow-engine'),
+    ],
+
 ];

@@ -7,6 +7,7 @@ use App\Enums\AuditStatus;
 use App\Models\AuditLog;
 use App\Models\OutboxEvent;
 use App\Models\Tenant;
+use App\Observability\Tracing;
 use App\Repositories\AuditLogRepository;
 use App\Repositories\OutboxEventRepository;
 use Illuminate\Support\Facades\DB;
@@ -19,6 +20,7 @@ class LeadIngestionService
         private WebhookDispatcher $webhookDispatcher,
         private AuditLogRepository $auditLogs,
         private OutboxEventRepository $outboxEvents,
+        private Tracing $tracing,
     ) {}
 
     /**
@@ -85,10 +87,15 @@ class LeadIngestionService
      */
     private function ingestPhase2(Tenant $tenant, array $payload): array
     {
+        $this->tracing->withTenant($tenant->id);
+
         $outbox = DB::transaction(function () use ($tenant, $payload): OutboxEvent {
+            $trace = $this->tracing->current();
+
             return $this->outboxEvents->createPending('lead.incoming', [
                 'tenant_id' => $tenant->id,
                 'received' => $payload,
+                'traceparent' => $trace?->toTraceparent(),
             ]);
         });
 

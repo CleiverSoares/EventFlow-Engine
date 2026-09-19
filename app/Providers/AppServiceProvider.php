@@ -7,6 +7,7 @@ use App\Contracts\MessagePublisher;
 use App\Contracts\TenantRateLimiter;
 use App\Contracts\WebhookDispatcher;
 use App\Observability\InMemoryMetricsRegistry;
+use App\Observability\Tracing;
 use App\Services\Dispatch\HttpWebhookDispatcher;
 use App\Services\Enrichment\BrasilApiEnrichmentClient;
 use App\Services\Messaging\RabbitMqMessagePublisher;
@@ -18,6 +19,7 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(InMemoryMetricsRegistry::class);
+        $this->app->singleton(Tracing::class);
 
         $this->app->bind(EnrichmentClient::class, BrasilApiEnrichmentClient::class);
         $this->app->bind(WebhookDispatcher::class, HttpWebhookDispatcher::class);
