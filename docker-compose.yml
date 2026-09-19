@@ -5,9 +5,11 @@
 # Logs:   docker compose logs -f
 #
 # App services:
+#   API (Octane/FrankenPHP) -> localhost:8000  (docker compose up -d api)
 #   PostgreSQL  -> localhost:5432  (eventflow / eventflow / eventflow)
 #   Redis       -> localhost:6379
 #   RabbitMQ    -> AMQP :5672  |  UI http://localhost:15672  (eventflow / eventflow)
+#   Workers     -> relay-outbox + consume-leads (phase2)
 #
 # Observability:
 #   Prometheus  -> http://localhost:9090
@@ -76,6 +78,7 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
+      - --web.enable-remote-write-receiver
     ports:
       - "9090:9090"
     volumes:
@@ -122,6 +125,130 @@ services:
       - "16686:16686"
       - "4317:4317"
       - "4318:4318"
+
+  # Octane API (FrankenPHP) — multi-worker HTTP for realistic k6 load
+  api:
+    build:
+      context: ./docker/frankenphp
+    container_name: eventflow-api
+    restart: unless-stopped
+    working_dir: /app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      APP_ENV: local
+      APP_KEY: ${APP_KEY:-}
+      OCTANE_SERVER: frankenphp
+      EVENTFLOW_MODE: ${EVENTFLOW_MODE:-phase2}
+      DB_CONNECTION: pgsql
+      DB_HOST: host.docker.internal
+      DB_PORT: 5432
+      DB_DATABASE: eventflow
+      DB_USERNAME: eventflow
+      DB_PASSWORD: eventflow
+      CACHE_STORE: redis
+      REDIS_CLIENT: predis
+      REDIS_HOST: host.docker.internal
+      REDIS_PORT: 6379
+      QUEUE_CONNECTION: redis
+      RABBITMQ_HOST: host.docker.internal
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: eventflow
+      RABBITMQ_PASSWORD: eventflow
+      RABBITMQ_VHOST: /
+      RABBITMQ_QUEUE: leads.incoming
+      RABBITMQ_RETRY_QUEUE: leads.incoming.retry
+      RABBITMQ_DLQ: leads.incoming.dlq
+      EVENTFLOW_ENRICHMENT_BASE_URL: http://host.docker.internal:8091
+      EVENTFLOW_WEBHOOK_URL: http://host.docker.internal:8090/webhook
+      EVENTFLOW_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
+      EVENTFLOW_TRACING_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command:
+      [
+        "php",
+        "artisan",
+        "octane:frankenphp",
+        "--host=0.0.0.0",
+        "--port=8000",
+        "--workers=8",
+        "--max-requests=1000",
+      ]
+
+  # PHP 64-bit workers (host PHP is often 32-bit and breaks php-amqplib)
+  relay-outbox:
+    build:
+      context: ./docker/php
+    container_name: eventflow-relay
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment: &worker-env
+      APP_ENV: local
+      APP_KEY: ${APP_KEY:-}
+      EVENTFLOW_MODE: phase2
+      DB_CONNECTION: pgsql
+      DB_HOST: host.docker.internal
+      DB_PORT: 5432
+      DB_DATABASE: eventflow
+      DB_USERNAME: eventflow
+      DB_PASSWORD: eventflow
+      CACHE_STORE: redis
+      REDIS_CLIENT: predis
+      REDIS_HOST: host.docker.internal
+      REDIS_PORT: 6379
+      QUEUE_CONNECTION: redis
+      RABBITMQ_HOST: host.docker.internal
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: eventflow
+      RABBITMQ_PASSWORD: eventflow
+      RABBITMQ_VHOST: /
+      RABBITMQ_QUEUE: leads.incoming
+      RABBITMQ_RETRY_QUEUE: leads.incoming.retry
+      RABBITMQ_DLQ: leads.incoming.dlq
+      EVENTFLOW_ENRICHMENT_BASE_URL: http://host.docker.internal:8091
+      EVENTFLOW_WEBHOOK_URL: http://host.docker.internal:8090/webhook
+      EVENTFLOW_OTLP_ENDPOINT: http://host.docker.internal:4318/v1/traces
+      EVENTFLOW_TRACING_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    command: ["sh", "-c", "while true; do php artisan eventflow:relay-outbox; sleep 1; done"]
+
+  consume-leads:
+    build:
+      context: ./docker/php
+    container_name: eventflow-consume
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment: *worker-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    command: ["php", "artisan", "eventflow:consume-leads"]
 
 volumes:
   eventflow_postgres_data:

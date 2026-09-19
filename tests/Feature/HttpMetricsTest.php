@@ -15,6 +15,7 @@ class HttpMetricsTest extends TestCase
 
     public function test_metrics_endpoint_exposes_prometheus_text_after_ingest(): void
     {
+        app(InMemoryMetricsRegistry::class)->reset();
         config(['eventflow.mode' => 'phase1']);
 
         Tenant::factory()->create(['api_key' => 'ef_metrics_key']);
