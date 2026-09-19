@@ -14,6 +14,14 @@ class InMemoryMetricsRegistry
     /** @var list<float> */
     private array $histogramBuckets = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
 
+    /** @var array<string, float> */
+    private array $counters = [];
+
+    /**
+     * @var array<string, array{count: float, sum: float, buckets: array<string, float>}>
+     */
+    private array $histograms = [];
+
     /**
      * @param  array<string, string|int|float>  $labels
      */
@@ -21,11 +29,17 @@ class InMemoryMetricsRegistry
     {
         $field = $this->seriesKey($name, $labels);
 
-        try {
-            Redis::hincrbyfloat(self::COUNTERS_KEY, $field, $value);
-        } catch (Throwable) {
-            // Demo fallback: ignore Redis blips so request path stays healthy.
+        if ($this->usesRedis()) {
+            try {
+                Redis::hincrbyfloat(self::COUNTERS_KEY, $field, $value);
+            } catch (Throwable) {
+                // Demo fallback: ignore Redis blips so request path stays healthy.
+            }
+
+            return;
         }
+
+        $this->counters[$field] = ($this->counters[$field] ?? 0.0) + $value;
     }
 
     /**
@@ -35,18 +49,46 @@ class InMemoryMetricsRegistry
     {
         $field = $this->seriesKey($name, $labels);
 
-        try {
-            Redis::hincrbyfloat(self::HISTOGRAMS_KEY, $field.'|count', 1.0);
-            Redis::hincrbyfloat(self::HISTOGRAMS_KEY, $field.'|sum', $valueSeconds);
-            Redis::hincrbyfloat(self::HISTOGRAMS_KEY, $field.'|le:+Inf', 1.0);
+        if ($this->usesRedis()) {
+            try {
+                Redis::hincrbyfloat(self::HISTOGRAMS_KEY, $field.'|count', 1.0);
+                Redis::hincrbyfloat(self::HISTOGRAMS_KEY, $field.'|sum', $valueSeconds);
+                Redis::hincrbyfloat(self::HISTOGRAMS_KEY, $field.'|le:+Inf', 1.0);
 
-            foreach ($this->histogramBuckets as $bound) {
-                if ($valueSeconds <= $bound) {
-                    Redis::hincrbyfloat(self::HISTOGRAMS_KEY, $field.'|le:'.$bound, 1.0);
+                foreach ($this->histogramBuckets as $bound) {
+                    if ($valueSeconds <= $bound) {
+                        Redis::hincrbyfloat(self::HISTOGRAMS_KEY, $field.'|le:'.$bound, 1.0);
+                    }
                 }
+            } catch (Throwable) {
+                // Demo fallback: ignore Redis blips so request path stays healthy.
             }
-        } catch (Throwable) {
-            // Demo fallback: ignore Redis blips so request path stays healthy.
+
+            return;
+        }
+
+        if (! isset($this->histograms[$field])) {
+            $buckets = [];
+            foreach ($this->histogramBuckets as $bound) {
+                $buckets[(string) $bound] = 0.0;
+            }
+            $buckets['+Inf'] = 0.0;
+
+            $this->histograms[$field] = [
+                'count' => 0.0,
+                'sum' => 0.0,
+                'buckets' => $buckets,
+            ];
+        }
+
+        $this->histograms[$field]['count']++;
+        $this->histograms[$field]['sum'] += $valueSeconds;
+        $this->histograms[$field]['buckets']['+Inf']++;
+
+        foreach ($this->histogramBuckets as $bound) {
+            if ($valueSeconds <= $bound) {
+                $this->histograms[$field]['buckets'][(string) $bound]++;
+            }
         }
     }
 
@@ -54,12 +96,7 @@ class InMemoryMetricsRegistry
     {
         $lines = [];
 
-        try {
-            /** @var array<string, string> $counters */
-            $counters = Redis::hgetall(self::COUNTERS_KEY) ?: [];
-        } catch (Throwable) {
-            $counters = [];
-        }
+        $counters = $this->usesRedis() ? $this->readRedisCounters() : $this->counters;
 
         foreach ($counters as $key => $value) {
             [$name, $labelString] = $this->parseSeriesKey((string) $key);
@@ -67,14 +104,9 @@ class InMemoryMetricsRegistry
             $lines[] = $name.$labelString.' '.$this->formatNumber((float) $value);
         }
 
-        try {
-            /** @var array<string, string> $histogramFields */
-            $histogramFields = Redis::hgetall(self::HISTOGRAMS_KEY) ?: [];
-        } catch (Throwable) {
-            $histogramFields = [];
-        }
-
-        $histograms = $this->hydrateHistograms($histogramFields);
+        $histograms = $this->usesRedis()
+            ? $this->hydrateHistograms($this->readRedisHistogramFields())
+            : $this->histograms;
 
         foreach ($histograms as $key => $histogram) {
             [$name, $labelString] = $this->parseSeriesKey($key);
@@ -94,10 +126,55 @@ class InMemoryMetricsRegistry
 
     public function reset(): void
     {
+        $this->counters = [];
+        $this->histograms = [];
+
+        if (! $this->usesRedis()) {
+            return;
+        }
+
         try {
             Redis::del(self::COUNTERS_KEY, self::HISTOGRAMS_KEY);
         } catch (Throwable) {
             //
+        }
+    }
+
+    private function usesRedis(): bool
+    {
+        return ! app()->runningUnitTests();
+    }
+
+    /**
+     * @return array<string, float>
+     */
+    private function readRedisCounters(): array
+    {
+        try {
+            /** @var array<string, string> $counters */
+            $counters = Redis::hgetall(self::COUNTERS_KEY) ?: [];
+        } catch (Throwable) {
+            return [];
+        }
+
+        $parsed = [];
+        foreach ($counters as $key => $value) {
+            $parsed[(string) $key] = (float) $value;
+        }
+
+        return $parsed;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function readRedisHistogramFields(): array
+    {
+        try {
+            /** @var array<string, string> $fields */
+            return Redis::hgetall(self::HISTOGRAMS_KEY) ?: [];
+        } catch (Throwable) {
+            return [];
         }
     }
 
