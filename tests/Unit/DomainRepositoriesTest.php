@@ -50,10 +50,11 @@ class DomainRepositoriesTest extends TestCase
 
     public function test_outbox_repository_creates_pending_and_finds_pending(): void
     {
+        $tenant = Tenant::factory()->create();
         $repository = app(OutboxEventRepository::class);
 
-        $created = $repository->createPending('lead.incoming', ['cnpj' => '123']);
-        OutboxEvent::factory()->processed()->create();
+        $created = $repository->createPending($tenant->id, 'lead.incoming', ['cnpj' => '123']);
+        OutboxEvent::factory()->processed()->create(['tenant_id' => $tenant->id]);
 
         $pending = $repository->findPending();
 

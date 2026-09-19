@@ -21,7 +21,7 @@ class HttpMetricsTest extends TestCase
         Tenant::factory()->create(['api_key' => 'ef_metrics_key']);
 
         $this->mock(EnrichmentClient::class, function ($mock): void {
-            $mock->shouldReceive('enrichByCnpj')->once()->andReturn(['razao_social' => 'X']);
+            $mock->allows('enrichByCnpj')->andReturn(['razao_social' => 'X']);
         });
 
         $this->mock(WebhookDispatcher::class, function ($mock): void {
@@ -32,12 +32,16 @@ class HttpMetricsTest extends TestCase
             ->postJson('/api/leads', ['cnpj' => '12345678000199'])
             ->assertCreated();
 
-        $response = $this->get('/api/metrics');
+        $this->withToken('test-metrics-token')
+            ->get('/api/metrics')
+            ->assertOk()
+            ->assertHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
 
-        $response->assertOk();
-        $response->assertHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
-        $this->assertStringContainsString('http_requests_total', $response->getContent());
-        $this->assertStringContainsString('api/leads', $response->getContent());
+        $body = $this->withToken('test-metrics-token')->get('/api/metrics')->getContent();
+        $this->assertStringContainsString('http_requests_total', $body);
+        $this->assertStringContainsString('api/leads', $body);
+
+        $this->withToken('wrong-token')->get('/api/metrics')->assertUnauthorized();
 
         app(InMemoryMetricsRegistry::class)->reset();
     }

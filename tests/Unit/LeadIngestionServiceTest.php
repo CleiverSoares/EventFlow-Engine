@@ -133,10 +133,21 @@ class LeadIngestionServiceTest extends TestCase
         $outbox = Mockery::mock(OutboxEventRepository::class);
         $outbox->shouldReceive('createPending')
             ->once()
-            ->with('lead.incoming', Mockery::on(fn (array $payload): bool => ($payload['tenant_id'] ?? null) === $tenant->id))
+            ->with(
+                $tenant->id,
+                'lead.incoming',
+                Mockery::on(fn (array $payload): bool => ($payload['tenant_id'] ?? null) === $tenant->id),
+                null,
+            )
             ->andReturn($outboxEvent);
 
         config(['eventflow.mode' => 'phase2']);
+        config(['eventflow.outbox.max_pending' => 0]);
+        config(['eventflow.outbox.max_pending_per_tenant' => 0]);
+
+        $outbox->shouldReceive('countPending')->never();
+        $outbox->shouldReceive('countPendingForTenant')->never();
+        $outbox->shouldReceive('findByTenantAndIdempotencyKey')->never();
 
         $service = new LeadIngestionService($enrichment, $webhook, $audits, $outbox, $this->tracing());
         $result = $service->ingest($tenant, ['cnpj' => '12345678000199']);

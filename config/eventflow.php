@@ -111,6 +111,19 @@ return [
     'outbox' => [
         'max_attempts' => (int) env('EVENTFLOW_OUTBOX_MAX_ATTEMPTS', 5),
         'batch_size' => (int) env('EVENTFLOW_OUTBOX_BATCH_SIZE', 100),
+        'retention_days' => (int) env('EVENTFLOW_OUTBOX_RETENTION_DAYS', 7),
+        // 0 = disabled. Reject ingest with 503 when PENDING backlog exceeds these.
+        'max_pending' => (int) env('EVENTFLOW_OUTBOX_MAX_PENDING', 0),
+        'max_pending_per_tenant' => (int) env('EVENTFLOW_OUTBOX_MAX_PENDING_PER_TENANT', 0),
+    ],
+
+    'metrics' => [
+        'token' => env('EVENTFLOW_METRICS_TOKEN', 'change-me-metrics-token'),
+    ],
+
+    'health' => [
+        'check_redis' => filter_var(env('EVENTFLOW_HEALTH_CHECK_REDIS', true), FILTER_VALIDATE_BOOL),
+        'check_rabbitmq' => filter_var(env('EVENTFLOW_HEALTH_CHECK_RABBITMQ', true), FILTER_VALIDATE_BOOL),
     ],
 
     /*
