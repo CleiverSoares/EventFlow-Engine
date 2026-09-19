@@ -42,6 +42,32 @@ class RabbitMqMessagePublisher implements MessagePublisher
 
     public function publish(array $body, array $headers = []): void
     {
+        $this->publishTo('leads.incoming', $body, $headers);
+    }
+
+    public function publishRetry(array $body, array $headers = []): void
+    {
+        $this->publishTo('leads.retry', $body, $headers);
+    }
+
+    public function publishDlq(array $body, array $headers = []): void
+    {
+        $this->publishTo('leads.dlq', $body, $headers);
+    }
+
+    public function __destruct()
+    {
+        if ($this->connection?->isConnected()) {
+            $this->connection->close();
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $body
+     * @param  array<string, scalar>  $headers
+     */
+    private function publishTo(string $routingKey, array $body, array $headers = []): void
+    {
         $this->declareTopology();
 
         $channel = $this->connection()->channel();
@@ -53,15 +79,8 @@ class RabbitMqMessagePublisher implements MessagePublisher
             'application_headers' => new AMQPTable($headers),
         ]);
 
-        $channel->basic_publish($message, 'eventflow.leads', 'leads.incoming');
+        $channel->basic_publish($message, 'eventflow.leads', $routingKey);
         $channel->close();
-    }
-
-    public function __destruct()
-    {
-        if ($this->connection?->isConnected()) {
-            $this->connection->close();
-        }
     }
 
     private function connection(): AMQPStreamConnection
