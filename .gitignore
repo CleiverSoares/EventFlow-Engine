@@ -37,3 +37,10 @@ projeto.md
 /k6/results/*.csv
 /k6/results/*.html
 
+
+**/caddy
+frankenphp
+frankenphp-worker.php
+rr
+rr.exe
+.rr.yaml

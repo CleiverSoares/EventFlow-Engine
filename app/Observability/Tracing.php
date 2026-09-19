@@ -54,8 +54,14 @@ class Tracing
         }
     }
 
+    /**
+     * Unix epoch nanoseconds as a decimal string (safe on 32-bit PHP).
+     */
     private function nowNanos(): string
     {
-        return sprintf('%.0f', (float) hrtime(true));
+        [$fraction, $seconds] = explode(' ', microtime(false), 2);
+        $nanos = (int) round(((float) $fraction) * 1_000_000_000);
+
+        return sprintf('%s%09d', $seconds, $nanos);
     }
 }

@@ -14,11 +14,16 @@
       "targets": [
         {
           "expr": "sum(rate(http_requests_total{route=\"api/leads\"}[1m])) by (status)",
-          "legendFormat": "{{status}}",
+          "legendFormat": "app {{status}}",
           "refId": "A"
+        },
+        {
+          "expr": "sum(rate(k6_http_reqs_total[1m]))",
+          "legendFormat": "k6 req/s",
+          "refId": "B"
         }
       ],
-      "title": "Ingest request rate by status",
+      "title": "Ingest request rate (app status + k6)",
       "type": "timeseries"
     },
     {
@@ -29,26 +34,56 @@
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{route=\"api/leads\"}[1m])) by (le))",
-          "legendFormat": "p95",
+          "legendFormat": "app p95",
           "refId": "A"
+        },
+        {
+          "expr": "k6_http_req_duration_p99",
+          "legendFormat": "k6 p99",
+          "refId": "B"
         }
       ],
-      "title": "Ingest latency p95",
+      "title": "Ingest latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "k6_http_req_failed_rate",
+          "legendFormat": "k6 http_req_failed",
+          "refId": "A"
+        },
+        {
+          "expr": "k6_eventflow_errors_rate",
+          "legendFormat": "k6 eventflow_errors",
+          "refId": "B"
+        }
+      ],
+      "title": "k6 client fail ratio (timeouts / errors)",
+      "description": "Client-side failures from k6 remote write. Timeouts show here even when the app never returns 5xx.",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": {}, "overrides": [] },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
-      "id": 3,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
       "targets": [
         {
           "expr": "sum(rate(http_request_errors_total{route=\"api/leads\"}[1m]))",
-          "legendFormat": "5xx/errors",
+          "legendFormat": "app 5xx",
           "refId": "A"
         }
       ],
-      "title": "Ingest error rate",
+      "title": "App 5xx rate (only when API responds 5xx)",
+      "description": "Empty during pure client timeouts — use the k6 fail ratio panel for chaos evidence.",
       "type": "timeseries"
     }
   ],
@@ -58,5 +93,5 @@
   "time": { "from": "now-15m", "to": "now" },
   "title": "EventFlow Phase 1 Ingest",
   "uid": "eventflow-phase1-ingest",
-  "version": 1
+  "version": 3
 }
