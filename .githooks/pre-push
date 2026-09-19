@@ -1,0 +1,10 @@
+﻿#!/bin/sh
+while read local_ref local_sha remote_ref remote_sha
+do
+  remote_branch="${remote_ref##refs/heads/}"
+  if [ "$remote_branch" = "main" ] || [ "$remote_branch" = "master" ]; then
+    echo "ERROR: direct push to '$remote_branch' is blocked. Open a PR from your branch."
+    exit 1
+  fi
+done
+exit 0
