@@ -32,3 +32,8 @@ projeto.md
 *.local.md
 /docs/
 
+# k6 raw dumps (keep SAMPLE notes)
+/k6/results/*.json
+/k6/results/*.csv
+/k6/results/*.html
+
