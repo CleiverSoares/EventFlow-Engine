@@ -2,7 +2,9 @@
 
 namespace Tests\Unit;
 
+use App\Models\AuditLog;
 use App\Services\Geo\LeadGeoIndex;
+use App\Services\LeadDispatchService;
 use App\Services\LeadEnrichmentService;
 use App\Services\LeadProcessingPipeline;
 use App\Services\Locking\LeadProcessingLock;
@@ -35,7 +37,10 @@ class LeadProcessingPipelineTest extends TestCase
             ->with('idem-1', Mockery::on(fn (array $payload): bool => ($payload['cnpj'] ?? null) === '12345678000199'))
             ->andReturn(false);
 
-        $pipeline = new LeadProcessingPipeline(new LeadProcessingLock, $enrichment, $geo);
+        $dispatch = Mockery::mock(LeadDispatchService::class);
+        $dispatch->shouldNotReceive('dispatchAndAudit');
+
+        $pipeline = new LeadProcessingPipeline(new LeadProcessingLock, $enrichment, $geo, $dispatch);
 
         $result = $pipeline->process('idem-1', ['cnpj' => '12345678000199']);
 
@@ -44,7 +49,7 @@ class LeadProcessingPipelineTest extends TestCase
         $this->assertFalse($result['geo_indexed']);
     }
 
-    public function test_process_indexes_geo_when_coordinates_present(): void
+    public function test_process_indexes_geo_and_dispatches_when_tenant_present(): void
     {
         $enrichment = Mockery::mock(LeadEnrichmentService::class);
         $enrichment->shouldReceive('enrichByCnpj')->once()->andReturn(['cnpj' => '12345678000199']);
@@ -55,9 +60,19 @@ class LeadProcessingPipelineTest extends TestCase
             ->with('idem-geo', Mockery::on(fn (array $payload): bool => isset($payload['lat'], $payload['lng'])))
             ->andReturn(true);
 
-        $pipeline = new LeadProcessingPipeline(new LeadProcessingLock, $enrichment, $geo);
+        $audit = new AuditLog(['tenant_id' => '11111111-1111-1111-1111-111111111111']);
+        $audit->id = '33333333-3333-3333-3333-333333333333';
+
+        $dispatch = Mockery::mock(LeadDispatchService::class);
+        $dispatch->shouldReceive('dispatchAndAudit')
+            ->once()
+            ->with('11111111-1111-1111-1111-111111111111', Mockery::type('array'))
+            ->andReturn($audit);
+
+        $pipeline = new LeadProcessingPipeline(new LeadProcessingLock, $enrichment, $geo, $dispatch);
 
         $result = $pipeline->process('idem-geo', [
+            'tenant_id' => '11111111-1111-1111-1111-111111111111',
             'cnpj' => '12345678000199',
             'lat' => -23.55,
             'lng' => -46.63,
@@ -65,6 +80,7 @@ class LeadProcessingPipelineTest extends TestCase
 
         $this->assertSame('processed', $result['status']);
         $this->assertTrue($result['geo_indexed']);
+        $this->assertSame($audit->id, $result['audit']->id);
     }
 
     public function test_process_returns_busy_when_lock_held(): void
@@ -78,7 +94,10 @@ class LeadProcessingPipelineTest extends TestCase
         $geo = Mockery::mock(LeadGeoIndex::class);
         $geo->shouldNotReceive('maybeIndex');
 
-        $pipeline = new LeadProcessingPipeline(new LeadProcessingLock, $enrichment, $geo);
+        $dispatch = Mockery::mock(LeadDispatchService::class);
+        $dispatch->shouldNotReceive('dispatchAndAudit');
+
+        $pipeline = new LeadProcessingPipeline(new LeadProcessingLock, $enrichment, $geo, $dispatch);
         $result = $pipeline->process('idem-busy', ['cnpj' => '12345678000199']);
 
         $this->assertSame('busy', $result['status']);
