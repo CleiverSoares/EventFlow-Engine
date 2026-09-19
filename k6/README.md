@@ -15,8 +15,27 @@ Drive ~3,000 RPS against `POST /api/leads` in **phase1** mode to show collapse
 
 ### Run
 
+PowerShell (sends k6 metrics to Prometheus → Grafana “k6 client fail ratio”):
+
+```powershell
+k6 run `
+  -o experimental-prometheus-rw `
+  -e K6_PROMETHEUS_RW_SERVER_URL=http://127.0.0.1:9090/api/v1/write `
+  -e BASE_URL=http://127.0.0.1:8000 `
+  -e API_KEY=ef_demo_basic_key_change_me `
+  -e TARGET_RPS=1000 `
+  -e DURATION=30s `
+  -e PRE_VUS=200 `
+  -e MAX_VUS=2000 `
+  k6/phase1-ingest.js
+```
+
+Cmd.exe:
+
 ```bash
 k6 run ^
+  -o experimental-prometheus-rw ^
+  -e K6_PROMETHEUS_RW_SERVER_URL=http://127.0.0.1:9090/api/v1/write ^
   -e BASE_URL=http://127.0.0.1:8000 ^
   -e API_KEY=ef_demo_basic_key_change_me ^
   -e TARGET_RPS=3000 ^
@@ -24,11 +43,14 @@ k6 run ^
   k6/phase1-ingest.js
 ```
 
+Prometheus needs `--web.enable-remote-write-receiver` (already in `docker-compose.yml`).
+
 ### What to screenshot (Grafana — Phase 1)
 
-1. **Ingest latency p95** climbing / unstable
-2. **Ingest request rate by status** showing 5xx / failures
-3. **Ingest error rate** rising under the same `TARGET_RPS`
+1. **k6 client fail ratio** climbing under load (timeouts / client errors)
+2. **Ingest latency p95** climbing / unstable
+3. **Ingest request rate by status (app)** — few 201s vs intended RPS
+4. Optional — terminal k6 summary (~99% `http_req_failed`)
 
 ---
 
@@ -97,3 +119,4 @@ Copy observations into `k6/results/` (markdown only). Do not commit huge JSON du
 
 - Phase 1 template: `k6/results/SAMPLE-phase1-notes.md`
 - Phase 2 template (+ comparison table): `k6/results/SAMPLE-phase2-notes.md`
+- Portfolio screenshots: [`phase1/`](../phase1/) · [`phase2/`](../phase2/) (linked from the root README)
