@@ -5,10 +5,16 @@ namespace Tests\Unit;
 use App\Contracts\EnrichmentClient;
 use App\Contracts\WebhookDispatcher;
 use App\Enums\AuditStatus;
+use App\Enums\OutboxStatus;
+use App\Enums\TenantPlan;
 use App\Models\AuditLog;
+use App\Models\OutboxEvent;
 use App\Models\Tenant;
 use App\Repositories\AuditLogRepository;
+use App\Repositories\OutboxEventRepository;
 use App\Services\LeadIngestionService;
+use App\Services\RateLimiting\CacheTenantRateLimiter;
+use Illuminate\Support\Facades\RateLimiter;
 use Mockery;
 use RuntimeException;
 use Tests\TestCase;
@@ -46,9 +52,12 @@ class LeadIngestionServiceTest extends TestCase
             })
             ->andReturn($audit);
 
+        $outbox = Mockery::mock(OutboxEventRepository::class);
+        $outbox->shouldNotReceive('createPending');
+
         config(['eventflow.mode' => 'phase1']);
 
-        $service = new LeadIngestionService($enrichment, $webhook, $audits);
+        $service = new LeadIngestionService($enrichment, $webhook, $audits, $outbox);
         $result = $service->ingest($tenant, ['cnpj' => '12345678000199']);
 
         $this->assertSame($audit->id, $result['audit']->id);
@@ -80,13 +89,75 @@ class LeadIngestionServiceTest extends TestCase
                 && ($payload['error'] ?? null) === 'Webhook down')
             ->andReturn($errorAudit);
 
+        $outbox = Mockery::mock(OutboxEventRepository::class);
+        $outbox->shouldNotReceive('createPending');
+
         config(['eventflow.mode' => 'phase1']);
 
-        $service = new LeadIngestionService($enrichment, $webhook, $audits);
+        $service = new LeadIngestionService($enrichment, $webhook, $audits, $outbox);
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Webhook down');
 
         $service->ingest($tenant, ['cnpj' => '12345678000199']);
+    }
+
+    public function test_phase2_creates_outbox_without_enrichment_or_webhook(): void
+    {
+        $tenant = new Tenant(['name' => 'Acme', 'api_key' => 'k', 'plan' => 'pro']);
+        $tenant->id = '22222222-2222-2222-2222-222222222222';
+
+        $enrichment = Mockery::mock(EnrichmentClient::class);
+        $enrichment->shouldNotReceive('enrichByCnpj');
+
+        $webhook = Mockery::mock(WebhookDispatcher::class);
+        $webhook->shouldNotReceive('dispatch');
+
+        $audits = Mockery::mock(AuditLogRepository::class);
+        $audits->shouldNotReceive('create');
+
+        $outboxEvent = new OutboxEvent([
+            'aggregate_type' => 'lead.incoming',
+            'payload' => [],
+            'status' => OutboxStatus::Pending,
+            'attempts' => 0,
+        ]);
+        $outboxEvent->id = '55555555-5555-5555-5555-555555555555';
+
+        $outbox = Mockery::mock(OutboxEventRepository::class);
+        $outbox->shouldReceive('createPending')
+            ->once()
+            ->with('lead.incoming', Mockery::on(fn (array $payload): bool => ($payload['tenant_id'] ?? null) === $tenant->id))
+            ->andReturn($outboxEvent);
+
+        config(['eventflow.mode' => 'phase2']);
+
+        $service = new LeadIngestionService($enrichment, $webhook, $audits, $outbox);
+        $result = $service->ingest($tenant, ['cnpj' => '12345678000199']);
+
+        $this->assertSame('phase2', $result['mode']);
+        $this->assertSame($outboxEvent->id, $result['outbox']->id);
+    }
+}
+
+class CacheTenantRateLimiterTest extends TestCase
+{
+    public function test_allows_under_ceiling_and_blocks_when_exceeded(): void
+    {
+        config([
+            'eventflow.rate_limits.basic' => 2,
+            'eventflow.redis.rate_prefix' => 'eventflow:rate:test:',
+        ]);
+
+        $tenant = new Tenant(['name' => 'Acme', 'api_key' => 'k', 'plan' => TenantPlan::Basic]);
+        $tenant->id = '66666666-6666-6666-6666-666666666666';
+
+        RateLimiter::clear(config('eventflow.redis.rate_prefix').$tenant->id);
+
+        $limiter = new CacheTenantRateLimiter;
+
+        $this->assertTrue($limiter->attempt($tenant));
+        $this->assertTrue($limiter->attempt($tenant));
+        $this->assertFalse($limiter->attempt($tenant));
     }
 }

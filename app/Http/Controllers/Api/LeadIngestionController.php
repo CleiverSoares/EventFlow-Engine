@@ -26,6 +26,15 @@ class LeadIngestionController extends Controller
             ], 502);
         }
 
+        if (($result['mode'] ?? null) === 'phase2') {
+            return response()->json([
+                'ok' => true,
+                'mode' => 'phase2',
+                'outbox_id' => $result['outbox']->id,
+                'status' => $result['outbox']->status->value,
+            ], 202);
+        }
+
         return response()->json([
             'ok' => true,
             'mode' => 'phase1',
