@@ -9,6 +9,7 @@ use App\Enums\TenantPlan;
 use App\Models\AuditLog;
 use App\Models\OutboxEvent;
 use App\Models\Tenant;
+use App\Observability\Tracing;
 use App\Repositories\AuditLogRepository;
 use App\Repositories\OutboxEventRepository;
 use App\Services\LeadEnrichmentService;
@@ -21,6 +22,11 @@ use Tests\TestCase;
 
 class LeadIngestionServiceTest extends TestCase
 {
+    private function tracing(): Tracing
+    {
+        return app(Tracing::class);
+    }
+
     public function test_happy_path_enriches_dispatches_and_audits(): void
     {
         $tenant = new Tenant(['name' => 'Acme', 'api_key' => 'k', 'plan' => 'pro']);
@@ -57,7 +63,7 @@ class LeadIngestionServiceTest extends TestCase
 
         config(['eventflow.mode' => 'phase1']);
 
-        $service = new LeadIngestionService($enrichment, $webhook, $audits, $outbox);
+        $service = new LeadIngestionService($enrichment, $webhook, $audits, $outbox, $this->tracing());
         $result = $service->ingest($tenant, ['cnpj' => '12345678000199']);
 
         $this->assertSame($audit->id, $result['audit']->id);
@@ -94,7 +100,7 @@ class LeadIngestionServiceTest extends TestCase
 
         config(['eventflow.mode' => 'phase1']);
 
-        $service = new LeadIngestionService($enrichment, $webhook, $audits, $outbox);
+        $service = new LeadIngestionService($enrichment, $webhook, $audits, $outbox, $this->tracing());
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Webhook down');
@@ -132,7 +138,7 @@ class LeadIngestionServiceTest extends TestCase
 
         config(['eventflow.mode' => 'phase2']);
 
-        $service = new LeadIngestionService($enrichment, $webhook, $audits, $outbox);
+        $service = new LeadIngestionService($enrichment, $webhook, $audits, $outbox, $this->tracing());
         $result = $service->ingest($tenant, ['cnpj' => '12345678000199']);
 
         $this->assertSame('phase2', $result['mode']);
