@@ -16,4 +16,16 @@ interface MessagePublisher
      * @param  array<string, scalar>  $headers
      */
     public function publish(array $body, array $headers = []): void;
+
+    /**
+     * @param  array<string, mixed>  $body
+     * @param  array<string, scalar>  $headers
+     */
+    public function publishRetry(array $body, array $headers = []): void;
+
+    /**
+     * @param  array<string, mixed>  $body
+     * @param  array<string, scalar>  $headers
+     */
+    public function publishDlq(array $body, array $headers = []): void;
 }
