@@ -1,0 +1,66 @@
+# EventFlow Engine — local infrastructure
+#
+# Start:  docker compose up -d
+# Stop:   docker compose down
+# Logs:   docker compose logs -f
+#
+# Services:
+#   PostgreSQL  -> localhost:5432  (user/pass/db: eventflow)
+#   Redis       -> localhost:6379
+#   RabbitMQ    -> AMQP localhost:5672  |  UI http://localhost:15672  (eventflow / eventflow)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: eventflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: eventflow
+      POSTGRES_USER: eventflow
+      POSTGRES_PASSWORD: eventflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - eventflow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eventflow -d eventflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: eventflow-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - eventflow_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: eventflow-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: eventflow
+      RABBITMQ_DEFAULT_PASS: eventflow
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - eventflow_rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  eventflow_postgres_data:
+  eventflow_redis_data:
+  eventflow_rabbitmq_data:
