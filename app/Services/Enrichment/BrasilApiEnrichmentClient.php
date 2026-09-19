@@ -14,13 +14,19 @@ class BrasilApiEnrichmentClient implements EnrichmentClient
         $cnpj = preg_replace('/\D+/', '', $cnpj) ?? '';
         $baseUrl = rtrim((string) config('eventflow.enrichment.base_url'), '/');
         $timeout = (int) config('eventflow.enrichment.timeout_seconds', 5);
+        $token = config('eventflow.enrichment.token');
 
         try {
-            $response = Http::baseUrl($baseUrl)
+            $request = Http::baseUrl($baseUrl)
                 ->acceptJson()
                 ->connectTimeout(min(3, $timeout))
-                ->timeout($timeout)
-                ->get('/cnpj/v1/'.$cnpj);
+                ->timeout($timeout);
+
+            if (is_string($token) && $token !== '') {
+                $request = $request->withToken($token);
+            }
+
+            $response = $request->get('/cnpj/v1/'.$cnpj);
         } catch (ConnectionException $exception) {
             throw new RuntimeException('Enrichment provider unreachable.', previous: $exception);
         }
@@ -38,7 +44,6 @@ class BrasilApiEnrichmentClient implements EnrichmentClient
             'nome_fantasia' => $data['nome_fantasia'] ?? null,
             'uf' => $data['uf'] ?? null,
             'municipio' => $data['municipio'] ?? null,
-            'raw' => $data,
         ];
     }
 }

@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Contracts\EnrichmentClient;
 use App\Contracts\WebhookDispatcher;
 use App\Enums\AuditStatus;
 use App\Models\AuditLog;
@@ -16,7 +15,7 @@ use RuntimeException;
 class LeadIngestionService
 {
     public function __construct(
-        private EnrichmentClient $enrichmentClient,
+        private LeadEnrichmentService $enrichment,
         private WebhookDispatcher $webhookDispatcher,
         private AuditLogRepository $auditLogs,
         private OutboxEventRepository $outboxEvents,
@@ -49,7 +48,7 @@ class LeadIngestionService
         $enriched = [
             'tenant_id' => $tenant->id,
             'received' => $payload,
-            'enrichment' => $this->enrichmentClient->enrichByCnpj((string) $payload['cnpj']),
+            'enrichment' => $this->enrichment->enrichByCnpj((string) $payload['cnpj']),
         ];
 
         try {

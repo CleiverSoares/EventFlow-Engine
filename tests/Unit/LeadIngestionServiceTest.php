@@ -2,7 +2,6 @@
 
 namespace Tests\Unit;
 
-use App\Contracts\EnrichmentClient;
 use App\Contracts\WebhookDispatcher;
 use App\Enums\AuditStatus;
 use App\Enums\OutboxStatus;
@@ -12,6 +11,7 @@ use App\Models\OutboxEvent;
 use App\Models\Tenant;
 use App\Repositories\AuditLogRepository;
 use App\Repositories\OutboxEventRepository;
+use App\Services\LeadEnrichmentService;
 use App\Services\LeadIngestionService;
 use App\Services\RateLimiting\CacheTenantRateLimiter;
 use Illuminate\Support\Facades\RateLimiter;
@@ -26,7 +26,7 @@ class LeadIngestionServiceTest extends TestCase
         $tenant = new Tenant(['name' => 'Acme', 'api_key' => 'k', 'plan' => 'pro']);
         $tenant->id = '22222222-2222-2222-2222-222222222222';
 
-        $enrichment = Mockery::mock(EnrichmentClient::class);
+        $enrichment = Mockery::mock(LeadEnrichmentService::class);
         $enrichment->shouldReceive('enrichByCnpj')
             ->once()
             ->with('12345678000199')
@@ -69,7 +69,7 @@ class LeadIngestionServiceTest extends TestCase
         $tenant = new Tenant(['name' => 'Acme', 'api_key' => 'k', 'plan' => 'basic']);
         $tenant->id = '22222222-2222-2222-2222-222222222222';
 
-        $enrichment = Mockery::mock(EnrichmentClient::class);
+        $enrichment = Mockery::mock(LeadEnrichmentService::class);
         $enrichment->shouldReceive('enrichByCnpj')->once()->andReturn(['razao_social' => 'ACME']);
 
         $webhook = Mockery::mock(WebhookDispatcher::class);
@@ -107,7 +107,7 @@ class LeadIngestionServiceTest extends TestCase
         $tenant = new Tenant(['name' => 'Acme', 'api_key' => 'k', 'plan' => 'pro']);
         $tenant->id = '22222222-2222-2222-2222-222222222222';
 
-        $enrichment = Mockery::mock(EnrichmentClient::class);
+        $enrichment = Mockery::mock(LeadEnrichmentService::class);
         $enrichment->shouldNotReceive('enrichByCnpj');
 
         $webhook = Mockery::mock(WebhookDispatcher::class);
