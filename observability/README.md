@@ -50,8 +50,25 @@ Provisioned dashboards under folder **EventFlow**:
 
 - **EventFlow Phase 1 Ingest** — sync chaos baseline
 - **EventFlow Phase 2 Pipeline** — ingest + outbox relay + consumer outcomes
+- **EventFlow CRM Exports Fairness** — multi-tenant export accept/process + queue wait by plan
+
+```promql
+sum(rate(http_requests_total{route="api/exports"}[1m])) by (status)
+sum(rate(eventflow_exports_processed_total[1m])) by (plan, result)
+histogram_quantile(0.95, sum(rate(eventflow_export_queue_wait_seconds_bucket[1m])) by (le, plan))
+```
+
+k6 → Prometheus (exports):
+
+```bash
+k6 run -o experimental-prometheus-rw \
+  -e K6_PROMETHEUS_RW_SERVER_URL=http://127.0.0.1:9090/api/v1/write \
+  -e BASE_URL=http://127.0.0.1:8000 \
+  k6/exports-multi-tenant.js
+```
 
 ## Notes
 
-- Metrics are in-process (fine for local demos; not multi-worker durable storage).
+- App counters/histograms are stored in Redis (shared across Octane workers).
 - Disable OTLP in tests via `EVENTFLOW_TRACING_ENABLED=false`.
+- `/api/metrics` requires `EVENTFLOW_METRICS_TOKEN` (Prometheus scrape uses the same default as `observability/prometheus/prometheus.yml`).

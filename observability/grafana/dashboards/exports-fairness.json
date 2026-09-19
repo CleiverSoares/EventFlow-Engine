@@ -1,0 +1,149 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{route=\"api/exports\"}[1m])) by (status)",
+          "legendFormat": "HTTP {{status}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(k6_http_reqs_total{scenario=~\"whale_exports|light_exports\"}[1m])) by (scenario)",
+          "legendFormat": "k6 {{scenario}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Export accept rate (app + k6)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "k6_eventflow_export_accepted_rate",
+          "legendFormat": "k6 accepted",
+          "refId": "A"
+        },
+        {
+          "expr": "k6_eventflow_export_errors_rate",
+          "legendFormat": "k6 errors",
+          "refId": "B"
+        }
+      ],
+      "title": "k6 export accept vs errors",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(rate(eventflow_exports_accepted_total[1m])) by (plan)",
+          "legendFormat": "accepted {{plan}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(eventflow_exports_processed_total[1m])) by (plan, result)",
+          "legendFormat": "{{result}} {{plan}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Accepted vs processed by plan",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(eventflow_export_queue_wait_seconds_bucket[1m])) by (le, plan))",
+          "legendFormat": "wait p95 {{plan}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(eventflow_export_queue_wait_seconds_bucket[1m])) by (le, plan))",
+          "legendFormat": "wait p50 {{plan}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Queue wait by plan (fairness)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(eventflow_export_process_duration_seconds_bucket[1m])) by (le, plan))",
+          "legendFormat": "process p95 {{plan}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(eventflow_export_process_duration_seconds_bucket[1m])) by (le, plan))",
+          "legendFormat": "process p50 {{plan}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Process duration by plan (JOIN CSV)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "k6_eventflow_export_request_duration_p99",
+          "legendFormat": "k6 POST p99",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{route=\"api/exports\"}[1m])) by (le))",
+          "legendFormat": "app POST p95",
+          "refId": "B"
+        }
+      ],
+      "title": "Accept latency (POST is cheap)",
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["eventflow", "exports", "load"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "title": "EventFlow CRM Exports Fairness",
+  "uid": "eventflow-crm-exports",
+  "version": 1
+}

@@ -75,14 +75,21 @@ services:
     image: prom/prometheus:v2.54.1
     container_name: eventflow-prometheus
     restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      - --web.enable-remote-write-receiver
+      - |
+        TOKEN="$${EVENTFLOW_METRICS_TOKEN:-change-me-metrics-token}"
+        sed "s|__METRICS_TOKEN__|$${TOKEN}|g" /etc/prometheus/prometheus.yml.tpl > /tmp/prometheus.yml
+        exec /bin/prometheus \
+          --config.file=/tmp/prometheus.yml \
+          --storage.tsdb.path=/prometheus \
+          --web.enable-remote-write-receiver
+    environment:
+      EVENTFLOW_METRICS_TOKEN: ${EVENTFLOW_METRICS_TOKEN:-change-me-metrics-token}
     ports:
       - "9090:9090"
     volumes:
-      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/prometheus.yml.tpl:/etc/prometheus/prometheus.yml.tpl:ro
       - eventflow_prometheus_data:/prometheus
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -152,7 +159,7 @@ services:
       DB_PASSWORD: eventflow
       CACHE_STORE: redis
       REDIS_CLIENT: predis
-      REDIS_HOST: host.docker.internal
+      REDIS_HOST: redis
       REDIS_PORT: 6379
       QUEUE_CONNECTION: redis
       RABBITMQ_HOST: host.docker.internal
@@ -163,14 +170,20 @@ services:
       RABBITMQ_QUEUE: leads.incoming
       RABBITMQ_RETRY_QUEUE: leads.incoming.retry
       RABBITMQ_DLQ: leads.incoming.dlq
+      RABBITMQ_EXPORTS_QUEUE: exports.requested
+      RABBITMQ_EXPORTS_RETRY_QUEUE: exports.requested.retry
+      RABBITMQ_EXPORTS_RETRY_TTL_MS: "3000"
       EVENTFLOW_ENRICHMENT_BASE_URL: http://host.docker.internal:8091
       EVENTFLOW_WEBHOOK_URL: http://host.docker.internal:8090/webhook
       EVENTFLOW_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
       EVENTFLOW_TRACING_ENABLED: "true"
+      EVENTFLOW_METRICS_TOKEN: ${EVENTFLOW_METRICS_TOKEN:-change-me-metrics-token}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     command:
       [
@@ -206,7 +219,7 @@ services:
       DB_PASSWORD: eventflow
       CACHE_STORE: redis
       REDIS_CLIENT: predis
-      REDIS_HOST: host.docker.internal
+      REDIS_HOST: redis
       REDIS_PORT: 6379
       QUEUE_CONNECTION: redis
       RABBITMQ_HOST: host.docker.internal
@@ -217,10 +230,14 @@ services:
       RABBITMQ_QUEUE: leads.incoming
       RABBITMQ_RETRY_QUEUE: leads.incoming.retry
       RABBITMQ_DLQ: leads.incoming.dlq
+      RABBITMQ_EXPORTS_QUEUE: exports.requested
+      RABBITMQ_EXPORTS_RETRY_QUEUE: exports.requested.retry
+      RABBITMQ_EXPORTS_RETRY_TTL_MS: "3000"
       EVENTFLOW_ENRICHMENT_BASE_URL: http://host.docker.internal:8091
       EVENTFLOW_WEBHOOK_URL: http://host.docker.internal:8090/webhook
       EVENTFLOW_OTLP_ENDPOINT: http://host.docker.internal:4318/v1/traces
       EVENTFLOW_TRACING_ENABLED: "true"
+      EVENTFLOW_METRICS_TOKEN: ${EVENTFLOW_METRICS_TOKEN:-change-me-metrics-token}
     depends_on:
       postgres:
         condition: service_healthy
@@ -249,6 +266,27 @@ services:
       rabbitmq:
         condition: service_healthy
     command: ["php", "artisan", "eventflow:consume-leads"]
+
+  # Fair CRM export worker (multi-tenant commercial_dossier load lab)
+  process-exports:
+    build:
+      context: ./docker/php
+    container_name: eventflow-exports
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment: *worker-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    command: ["php", "artisan", "eventflow:process-exports", "--sleep=1"]
 
 volumes:
   eventflow_postgres_data:
