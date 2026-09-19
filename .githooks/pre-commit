@@ -1,0 +1,7 @@
+#!/bin/sh
+branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
+  echo "ERROR: commits on '$branch' are blocked. Use a feature/chore branch."
+  exit 1
+fi
+exit 0
