@@ -4,10 +4,19 @@
 # Stop:   docker compose down
 # Logs:   docker compose logs -f
 #
-# Services:
-#   PostgreSQL  -> localhost:5432  (user/pass/db: eventflow)
+# App services:
+#   PostgreSQL  -> localhost:5432  (eventflow / eventflow / eventflow)
 #   Redis       -> localhost:6379
-#   RabbitMQ    -> AMQP localhost:5672  |  UI http://localhost:15672  (eventflow / eventflow)
+#   RabbitMQ    -> AMQP :5672  |  UI http://localhost:15672  (eventflow / eventflow)
+#
+# Observability:
+#   Prometheus  -> http://localhost:9090
+#   Grafana     -> http://localhost:3000  (admin / admin)
+#   Loki        -> http://localhost:3100
+#   Jaeger UI   -> http://localhost:16686
+#
+# Scrape target: Prometheus pulls http://host.docker.internal:8000/api/metrics
+# (run `php artisan serve` on the host). See observability/README.md
 
 services:
   postgres:
@@ -60,7 +69,64 @@ services:
       timeout: 5s
       retries: 10
 
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: eventflow-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - eventflow_prometheus_data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: eventflow-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - eventflow_grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+
+  loki:
+    image: grafana/loki:3.1.1
+    container_name: eventflow-loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - eventflow_loki_data:/loki
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: eventflow-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+
 volumes:
   eventflow_postgres_data:
   eventflow_redis_data:
   eventflow_rabbitmq_data:
+  eventflow_prometheus_data:
+  eventflow_grafana_data:
+  eventflow_loki_data:
