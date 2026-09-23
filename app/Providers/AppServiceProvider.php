@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Contracts\EnrichmentClient;
+use App\Contracts\ExportWakePublisher;
 use App\Contracts\MessagePublisher;
 use App\Contracts\TenantRateLimiter;
 use App\Contracts\WebhookDispatcher;
@@ -10,6 +11,8 @@ use App\Observability\InMemoryMetricsRegistry;
 use App\Observability\Tracing;
 use App\Services\Dispatch\HttpWebhookDispatcher;
 use App\Services\Enrichment\BrasilApiEnrichmentClient;
+use App\Services\Messaging\NullExportWakePublisher;
+use App\Services\Messaging\RabbitMqExportWakePublisher;
 use App\Services\Messaging\RabbitMqMessagePublisher;
 use App\Services\RateLimiting\CacheTenantRateLimiter;
 use Illuminate\Support\ServiceProvider;
@@ -25,6 +28,12 @@ class AppServiceProvider extends ServiceProvider
         $this->app->bind(WebhookDispatcher::class, HttpWebhookDispatcher::class);
         $this->app->bind(TenantRateLimiter::class, CacheTenantRateLimiter::class);
         $this->app->singleton(MessagePublisher::class, RabbitMqMessagePublisher::class);
+
+        if ($this->app->environment('testing')) {
+            $this->app->singleton(ExportWakePublisher::class, NullExportWakePublisher::class);
+        } else {
+            $this->app->singleton(ExportWakePublisher::class, RabbitMqExportWakePublisher::class);
+        }
     }
 
     public function boot(): void

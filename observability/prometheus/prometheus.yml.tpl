@@ -1,5 +1,3 @@
-# Prefer prometheus.yml.tpl + docker-compose token injection.
-# Kept as a local fallback when running Prometheus outside Compose.
 global:
   scrape_interval: 5s
 
@@ -8,7 +6,7 @@ scrape_configs:
     metrics_path: /api/metrics
     authorization:
       type: Bearer
-      credentials: change-me-metrics-token
+      credentials: __METRICS_TOKEN__
     static_configs:
       - targets:
           - host.docker.internal:8000

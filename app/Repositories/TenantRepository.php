@@ -2,6 +2,7 @@
 
 namespace App\Repositories;
 
+use App\Enums\TenantPlan;
 use App\Models\Tenant;
 
 class TenantRepository
@@ -11,8 +12,13 @@ class TenantRepository
         return Tenant::query()->where('api_key', $apiKey)->first();
     }
 
+    public function findById(string $id): ?Tenant
+    {
+        return Tenant::query()->whereKey($id)->first();
+    }
+
     /**
-     * @param  array{name: string, api_key: string, plan: \App\Enums\TenantPlan|string}  $attributes
+     * @param  array{name: string, api_key: string, plan: TenantPlan|string}  $attributes
      */
     public function create(array $attributes): Tenant
     {

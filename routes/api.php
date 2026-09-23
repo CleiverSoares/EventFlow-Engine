@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuditLogController;
+use App\Http\Controllers\Api\ExportController;
 use App\Http\Controllers\Api\HealthController;
 use App\Http\Controllers\Api\LeadIngestionController;
 use App\Http\Controllers\Api\OutboxEventController;
@@ -30,4 +31,9 @@ Route::middleware([
     Route::get('/outbox/{outbox}', [OutboxEventController::class, 'show']);
     Route::get('/audit-logs', [AuditLogController::class, 'index']);
     Route::get('/audit-logs/{auditLog}', [AuditLogController::class, 'show']);
+
+    Route::post('/exports', [ExportController::class, 'store']);
+    Route::get('/exports', [ExportController::class, 'index']);
+    Route::get('/exports/{export}', [ExportController::class, 'show']);
+    Route::get('/exports/{export}/download', [ExportController::class, 'download']);
 });

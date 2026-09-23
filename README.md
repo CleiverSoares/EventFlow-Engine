@@ -11,6 +11,8 @@
 
 Multi-tenant **ingest → enrich → dispatch** platform for mass leads/events.
 
+**What this is:** a portfolio / learning lab built to **demonstrate and measure load** (k6 + Grafana), not a production SaaS. Use it to reproduce Before/After collapse under RPS and multi-tenant export fairness under heavy CRM joins.
+
 This repository tells a deliberate **Before vs After** story: the same Laravel app, switched by `EVENTFLOW_MODE`, shows why a synchronous path collapses under load — and how a transactional outbox + RabbitMQ + Redis architecture keeps the API edge healthy while workers drain work asynchronously.
 
 Local evidence (Octane/FrankenPHP in Docker): **Phase 1** @ ~1000 RPS target → ~**59%** client fail, p95 ~**30s** timeouts. **Phase 2** ingest → **100%** HTTP `202`, **0%** fail; relay/consume drain without DLQ.
@@ -66,7 +68,7 @@ flowchart LR
 | Enrichment | BrasilAPI CNPJ (config-driven) |
 | Resilience | Circuit breaker around outbound HTTP |
 | Observability | Prometheus · Grafana · Loki · Jaeger (OTLP) |
-| Load | k6 (`k6/phase1-ingest.js`, `k6/phase2-ingest.js`) |
+| Load | k6 (`k6/phase1-ingest.js`, `k6/phase2-ingest.js`, `k6/exports-multi-tenant.js`) |
 
 ---
 
@@ -200,7 +202,7 @@ Demo API keys (after seed) are commented in `.env.example`.
 
 | Service | URL |
 |---------|-----|
-| Grafana | http://localhost:3000 (`admin` / `admin`) |
+| Grafana | http://localhost:3000 (`admin` / `admin`) — dashboards Phase 1, Phase 2, **CRM Exports Fairness** |
 | Prometheus | http://localhost:9090 |
 | Jaeger | http://localhost:16686 |
 | RabbitMQ UI | http://localhost:15672 (`eventflow` / `eventflow`) |
@@ -237,6 +239,25 @@ Evidence screenshots used `TARGET_RPS=80` on a clean outbox (no multi-run backlo
 
 Workers + API run in Docker (PHP 64-bit). Host `php artisan serve` is fine for smoke tests only — not for k6 ≥ hundreds RPS.
 
+### 4b. Multi-tenant CRM exports (fairness demo)
+
+Heavy `commercial_dossier` JOINs with a whale + light tenants. Fair worker: **RabbitMQ wake** + **Postgres claim** by plan cap (small tenants are not blocked by one huge export).
+
+```bash
+php artisan migrate
+php artisan eventflow:seed-crm-load --whale=2000 --light=100
+docker compose up -d api process-exports
+
+k6 run -o experimental-prometheus-rw ^
+  -e K6_PROMETHEUS_RW_SERVER_URL=http://127.0.0.1:9090/api/v1/write ^
+  -e BASE_URL=http://127.0.0.1:8000 -e WHALE_RPS=1 -e LIGHT_RPS=5 -e DURATION=30s ^
+  k6/exports-multi-tenant.js
+```
+
+Grafana: **EventFlow CRM Exports Fairness** (queue wait by plan). RabbitMQ UI: queue `exports.requested` (wake only — claim stays fair in Postgres).
+
+Runbook: [`k6/README.md`](k6/README.md) → **Multi-tenant CRM exports**.
+
 ### 5. Tests
 
 ```bash
@@ -265,6 +286,18 @@ GET /api/outbox?status=PENDING
 X-Api-Key: <tenant api_key>
 ```
 
+```http
+POST /api/exports
+X-Api-Key: <tenant api_key>
+Idempotency-Key: <optional>
+Content-Type: application/json
+
+{ "report": "commercial_dossier", "format": "csv", "filters": {} }
+```
+
+- Async → `202` + `export_id` · sync (`"sync": true`) → `200` when completed  
+- `GET /api/exports/{id}` → status + `wait_ms` · `GET .../download` → CSV
+
 ---
 
 ## Domain tables
@@ -272,6 +305,7 @@ X-Api-Key: <tenant api_key>
 - `tenants` — UUID, `api_key` (indexed), plan `basic` \| `pro` \| `enterprise`  
 - `outbox_events` — `tenant_id`, JSONB payload, optional `idempotency_key`, status `PENDING` \| `PROCESSING` \| `PROCESSED` \| `FAILED`, `attempts`  
 - `audit_logs` — `tenant_id`, enriched JSONB, status `SUCCESS` \| `DISPATCHED` \| `ERROR`
+- `crm_*` + `exports` — multi-table commercial dossier + fair export queue
 
 ---
 
@@ -289,4 +323,4 @@ Implementation was driven by Kiro-style specs under `.cursor/specs/eventflow-eng
 
 ## License
 
-MIT (or project default). Portfolio / learning project — not a production SaaS.
+MIT (or project default). **Load-testing / portfolio lab** — not a production SaaS.

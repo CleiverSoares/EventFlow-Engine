@@ -126,6 +126,20 @@ return [
         'check_rabbitmq' => filter_var(env('EVENTFLOW_HEALTH_CHECK_RABBITMQ', true), FILTER_VALIDATE_BOOL),
     ],
 
+    'exports' => [
+        'mode' => env('EVENTFLOW_EXPORT_MODE', 'async'),
+        'chunk_size' => (int) env('EVENTFLOW_EXPORT_CHUNK_SIZE', 200),
+        'max_processing_global' => (int) env('EVENTFLOW_EXPORT_MAX_PROCESSING_GLOBAL', 4),
+        'max_processing_basic' => (int) env('EVENTFLOW_EXPORT_MAX_PROCESSING_BASIC', 1),
+        'max_processing_pro' => (int) env('EVENTFLOW_EXPORT_MAX_PROCESSING_PRO', 2),
+        'max_processing_enterprise' => (int) env('EVENTFLOW_EXPORT_MAX_PROCESSING_ENTERPRISE', 3),
+        'rabbitmq' => [
+            'queue' => env('RABBITMQ_EXPORTS_QUEUE', 'exports.requested'),
+            'retry_queue' => env('RABBITMQ_EXPORTS_RETRY_QUEUE', 'exports.requested.retry'),
+            'retry_ttl_ms' => (int) env('RABBITMQ_EXPORTS_RETRY_TTL_MS', 3000),
+        ],
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Tracing (W3C Trace Context + OTLP HTTP → Jaeger)
