@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Contracts\ExportWakePublisher;
 use App\Enums\ExportReport;
 use App\Enums\ExportStatus;
+use App\Events\ExportUpdated;
 use App\Models\Export;
 use App\Models\Tenant;
 use App\Observability\InMemoryMetricsRegistry;
@@ -55,6 +56,8 @@ class ExportService
             'report' => $report->value,
         ]);
 
+        $this->broadcast($export->loadMissing('tenant'));
+
         $runInline = $sync || (string) config('eventflow.exports.mode', 'async') === 'sync';
 
         if ($runInline) {
@@ -74,6 +77,8 @@ class ExportService
             return null;
         }
 
+        $this->broadcast($export);
+
         return $this->process($export);
     }
 
@@ -81,6 +86,7 @@ class ExportService
     {
         if ($export->status === ExportStatus::Pending) {
             $export = $this->exports->markProcessing($export);
+            $this->broadcast($export);
         }
 
         $tenant = $this->tenants->findById($export->tenant_id);
@@ -105,11 +111,13 @@ class ExportService
 
             $completed = $this->exports->markCompleted($export, $result['path'], $result['rows']);
             $this->recordProcessOutcome($plan, 'completed', $started);
+            $this->broadcast($completed);
 
             return $completed;
         } catch (Throwable $exception) {
             $failed = $this->exports->markFailed($export, $exception->getMessage());
             $this->recordProcessOutcome($plan, 'failed', $started);
+            $this->broadcast($failed);
 
             return $failed;
         }
@@ -123,6 +131,15 @@ class ExportService
     public function findForTenant(string $tenantId, string $id): ?Export
     {
         return $this->exports->findForTenant($tenantId, $id);
+    }
+
+    private function broadcast(Export $export): void
+    {
+        try {
+            ExportUpdated::dispatch($export);
+        } catch (Throwable $exception) {
+            Log::debug('Export broadcast skipped', ['error' => $exception->getMessage()]);
+        }
     }
 
     private function wakeWorkers(Export $export): void

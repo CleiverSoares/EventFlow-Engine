@@ -82,6 +82,49 @@ class ExportRepository
     }
 
     /**
+     * @return array{pending: int, processing: int, completed: int, failed: int}
+     */
+    public function countByStatus(): array
+    {
+        $rows = Export::query()
+            ->selectRaw('status, count(*) as aggregate')
+            ->groupBy('status')
+            ->pluck('aggregate', 'status');
+
+        return [
+            'pending' => (int) ($rows[ExportStatus::Pending->value] ?? 0),
+            'processing' => (int) ($rows[ExportStatus::Processing->value] ?? 0),
+            'completed' => (int) ($rows[ExportStatus::Completed->value] ?? 0),
+            'failed' => (int) ($rows[ExportStatus::Failed->value] ?? 0),
+        ];
+    }
+
+    /**
+     * @return Collection<int, Export>
+     */
+    public function recentForLab(int $limit = 50): Collection
+    {
+        return Export::query()
+            ->with('tenant:id,name,plan,api_key')
+            ->orderByDesc('created_at')
+            ->limit($limit)
+            ->get();
+    }
+
+    /**
+     * @return Collection<int, object{tenant_id: string, name: string, plan: string, api_key: string, status: string, aggregate: int}>
+     */
+    public function statusBreakdownByTenant(): Collection
+    {
+        return DB::table('exports')
+            ->join('tenants', 'tenants.id', '=', 'exports.tenant_id')
+            ->selectRaw('tenants.id as tenant_id, tenants.name, tenants.plan, tenants.api_key, exports.status, count(*) as aggregate')
+            ->groupBy('tenants.id', 'tenants.name', 'tenants.plan', 'tenants.api_key', 'exports.status')
+            ->orderBy('tenants.name')
+            ->get();
+    }
+
+    /**
      * Fair claim: prefer tenants under their plan cap with the oldest PENDING export.
      */
     public function claimNextFair(): ?Export

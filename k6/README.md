@@ -141,6 +141,8 @@ start light jobs without waiting for the entire whale export to finish.
 
 Wake path: `POST /api/exports` → `PENDING` → RabbitMQ `exports.requested` → worker → **`claimNextFair()`** in Postgres (plan caps). The message is a signal only — not FIFO “process this id”.
 
+Live UI: open **http://localhost:8000/lab/exports** (Reverb WebSocket — no polling).
+
 ### Run (with Grafana)
 
 ```bash

@@ -178,6 +178,13 @@ services:
       EVENTFLOW_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
       EVENTFLOW_TRACING_ENABLED: "true"
       EVENTFLOW_METRICS_TOKEN: ${EVENTFLOW_METRICS_TOKEN:-change-me-metrics-token}
+      BROADCAST_CONNECTION: reverb
+      REVERB_APP_ID: ${REVERB_APP_ID:-eventflow}
+      REVERB_APP_KEY: ${REVERB_APP_KEY:-eventflow-reverb-key}
+      REVERB_APP_SECRET: ${REVERB_APP_SECRET:-eventflow-reverb-secret}
+      REVERB_HOST: reverb
+      REVERB_PORT: 8080
+      REVERB_SCHEME: http
     depends_on:
       postgres:
         condition: service_healthy
@@ -185,6 +192,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      reverb:
+        condition: service_started
     command:
       [
         "php",
@@ -238,6 +247,15 @@ services:
       EVENTFLOW_OTLP_ENDPOINT: http://host.docker.internal:4318/v1/traces
       EVENTFLOW_TRACING_ENABLED: "true"
       EVENTFLOW_METRICS_TOKEN: ${EVENTFLOW_METRICS_TOKEN:-change-me-metrics-token}
+      BROADCAST_CONNECTION: reverb
+      REVERB_APP_ID: ${REVERB_APP_ID:-eventflow}
+      REVERB_APP_KEY: ${REVERB_APP_KEY:-eventflow-reverb-key}
+      REVERB_APP_SECRET: ${REVERB_APP_SECRET:-eventflow-reverb-secret}
+      REVERB_HOST: reverb
+      REVERB_PORT: 8080
+      REVERB_SCHEME: http
+      REVERB_SERVER_HOST: 0.0.0.0
+      REVERB_SERVER_PORT: 8080
     depends_on:
       postgres:
         condition: service_healthy
@@ -287,6 +305,23 @@ services:
       rabbitmq:
         condition: service_healthy
     command: ["php", "artisan", "eventflow:process-exports", "--sleep=1"]
+
+  # Laravel Reverb — WebSocket for /lab/exports live board
+  reverb:
+    build:
+      context: ./docker/php
+    container_name: eventflow-reverb
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+    ports:
+      - "8080:8080"
+    environment: *worker-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["php", "artisan", "reverb:start", "--host=0.0.0.0", "--port=8080"]
 
 volumes:
   eventflow_postgres_data:

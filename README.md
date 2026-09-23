@@ -203,6 +203,7 @@ Demo API keys (after seed) are commented in `.env.example`.
 | Service | URL |
 |---------|-----|
 | Grafana | http://localhost:3000 (`admin` / `admin`) — dashboards Phase 1, Phase 2, **CRM Exports Fairness** |
+| Exports lab board | http://localhost:8000/lab/exports (Reverb WebSocket) |
 | Prometheus | http://localhost:9090 |
 | Jaeger | http://localhost:16686 |
 | RabbitMQ UI | http://localhost:15672 (`eventflow` / `eventflow`) |
@@ -255,6 +256,9 @@ k6 run -o experimental-prometheus-rw ^
 ```
 
 Grafana: **EventFlow CRM Exports Fairness** (queue wait by plan). RabbitMQ UI: queue `exports.requested` (wake only — claim stays fair in Postgres).
+
+Live board (WebSocket via Reverb — **no polling**): http://localhost:8000/lab/exports  
+(`docker compose up -d api process-exports reverb` + `npm run build`)
 
 Runbook: [`k6/README.md`](k6/README.md) → **Multi-tenant CRM exports**.
 
