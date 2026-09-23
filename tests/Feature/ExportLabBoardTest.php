@@ -48,12 +48,34 @@ class ExportLabBoardTest extends TestCase
         $this->getJson('/lab/exports/snapshot')
             ->assertOk()
             ->assertJsonPath('totals.processing', 1)
+            ->assertJsonPath('tenants.0.processing', 1)
+            ->assertJsonPath('tenants.0.pending', 0)
             ->assertJsonStructure([
                 'totals' => ['pending', 'processing', 'completed', 'failed'],
                 'tenants',
                 'recent',
                 'generated_at',
             ]);
+    }
+
+    public function test_snapshot_maps_uppercase_db_status_to_tenant_counters(): void
+    {
+        $tenant = Tenant::factory()->create(['plan' => TenantPlan::Enterprise]);
+        Export::factory()->count(2)->create([
+            'tenant_id' => $tenant->id,
+            'status' => ExportStatus::Completed,
+        ]);
+        Export::factory()->create([
+            'tenant_id' => $tenant->id,
+            'status' => ExportStatus::Pending,
+        ]);
+
+        $this->getJson('/lab/exports/snapshot')
+            ->assertOk()
+            ->assertJsonPath('totals.completed', 2)
+            ->assertJsonPath('totals.pending', 1)
+            ->assertJsonPath('tenants.0.completed', 2)
+            ->assertJsonPath('tenants.0.pending', 1);
     }
 
     public function test_export_request_dispatches_broadcast_event(): void

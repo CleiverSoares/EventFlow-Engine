@@ -128,11 +128,13 @@ return [
 
     'exports' => [
         'mode' => env('EVENTFLOW_EXPORT_MODE', 'async'),
-        'chunk_size' => (int) env('EVENTFLOW_EXPORT_CHUNK_SIZE', 200),
-        'max_processing_global' => (int) env('EVENTFLOW_EXPORT_MAX_PROCESSING_GLOBAL', 4),
-        'max_processing_basic' => (int) env('EVENTFLOW_EXPORT_MAX_PROCESSING_BASIC', 1),
-        'max_processing_pro' => (int) env('EVENTFLOW_EXPORT_MAX_PROCESSING_PRO', 2),
-        'max_processing_enterprise' => (int) env('EVENTFLOW_EXPORT_MAX_PROCESSING_ENTERPRISE', 3),
+        'chunk_size' => (int) env('EVENTFLOW_EXPORT_CHUNK_SIZE', 500),
+        'max_processing_global' => (int) env('EVENTFLOW_EXPORT_MAX_PROCESSING_GLOBAL', 16),
+        'max_processing_basic' => (int) env('EVENTFLOW_EXPORT_MAX_PROCESSING_BASIC', 3),
+        'max_processing_pro' => (int) env('EVENTFLOW_EXPORT_MAX_PROCESSING_PRO', 5),
+        'max_processing_enterprise' => (int) env('EVENTFLOW_EXPORT_MAX_PROCESSING_ENTERPRISE', 4),
+        'wake_coalesce_ms' => (int) env('EVENTFLOW_EXPORT_WAKE_COALESCE_MS', 250),
+        'broadcast_queue' => env('EVENTFLOW_EXPORT_BROADCAST_QUEUE', 'exports.broadcast'),
         'rabbitmq' => [
             'queue' => env('RABBITMQ_EXPORTS_QUEUE', 'exports.requested'),
             'retry_queue' => env('RABBITMQ_EXPORTS_RETRY_QUEUE', 'exports.requested.retry'),

@@ -27,14 +27,15 @@ class ExportWakeFairnessTest extends TestCase
         $wake = Mockery::mock(ExportWakePublisher::class);
         $wake->shouldReceive('publishWake')
             ->once()
-            ->withArgs(function (array $body) use ($tenant): bool {
-                return ($body['type'] ?? null) === 'export.wake'
-                    && ($body['tenant_id'] ?? null) === $tenant->id
-                    && isset($body['export_id']);
+            ->withArgs(function (array $body): bool {
+                return ($body['type'] ?? null) === 'export.wake';
             });
 
         $this->app->instance(ExportWakePublisher::class, $wake);
-        config(['eventflow.exports.mode' => 'async']);
+        config([
+            'eventflow.exports.mode' => 'async',
+            'eventflow.exports.wake_coalesce_ms' => 0,
+        ]);
 
         $result = app(ExportService::class)->request(
             $tenant,
@@ -43,6 +44,24 @@ class ExportWakeFairnessTest extends TestCase
 
         $this->assertFalse($result['replay']);
         $this->assertSame(ExportStatus::Pending, $result['export']->status);
+    }
+
+    public function test_async_request_coalesces_wake_within_window(): void
+    {
+        $tenant = Tenant::factory()->create(['plan' => TenantPlan::Pro]);
+
+        $wake = Mockery::mock(ExportWakePublisher::class);
+        $wake->shouldReceive('publishWake')->once();
+
+        $this->app->instance(ExportWakePublisher::class, $wake);
+        config([
+            'eventflow.exports.mode' => 'async',
+            'eventflow.exports.wake_coalesce_ms' => 5_000,
+            'cache.default' => 'array',
+        ]);
+
+        app(ExportService::class)->request($tenant, ExportReport::CommercialDossier);
+        app(ExportService::class)->request($tenant, ExportReport::CommercialDossier);
     }
 
     public function test_handle_wake_drains_with_fair_claim_not_fifo_id(): void
@@ -77,6 +96,11 @@ class ExportWakeFairnessTest extends TestCase
         $wake->shouldReceive('publishWake')->once();
         $wake->shouldReceive('publishDelayedWake')->never();
         $this->app->instance(ExportWakePublisher::class, $wake);
+
+        config([
+            'cache.default' => 'array',
+            'eventflow.exports.wake_coalesce_ms' => 250,
+        ]);
 
         $exports = Mockery::mock(ExportService::class);
         $exports->shouldReceive('processNextFair')

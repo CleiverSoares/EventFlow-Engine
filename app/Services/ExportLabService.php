@@ -41,7 +41,8 @@ class ExportLabService
                 ];
             }
 
-            $status = (string) $row->status;
+            // DB/enum use PENDING|…; board counters use lowercase keys.
+            $status = strtolower((string) $row->status);
             if (array_key_exists($status, $tenants[$id]) && is_int($tenants[$id][$status])) {
                 $tenants[$id][$status] = (int) $row->aggregate;
             }
@@ -60,7 +61,7 @@ class ExportLabService
                 'plan' => $export->tenant?->plan?->value ?? $export->tenant?->plan,
                 'api_key' => $export->tenant?->api_key,
                 'report' => $export->report->value,
-                'status' => $export->status->value,
+                'status' => strtolower($export->status->value),
                 'row_count' => $export->row_count,
                 'wait_ms' => $waitMs,
                 'created_at' => $export->created_at?->toIso8601String(),

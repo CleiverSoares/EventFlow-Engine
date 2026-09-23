@@ -6,6 +6,7 @@ use App\Contracts\ExportWakePublisher;
 use App\Observability\InMemoryMetricsRegistry;
 use App\Repositories\ExportRepository;
 use App\Services\ExportService;
+use Illuminate\Support\Facades\Cache;
 use PhpAmqpLib\Connection\AMQPStreamConnection;
 use PhpAmqpLib\Message\AMQPMessage;
 
@@ -24,7 +25,7 @@ class RabbitMqExportConsumer
     ) {}
 
     /**
-     * Non-blocking: get one wake (if any), drain fair claims, ack.
+     * Non-blocking: get one wake (if any), drain fair claims, ack, drop redundant wakes.
      *
      * @return array{wakes: int, processed: int, delayed: int}
      */
@@ -45,10 +46,21 @@ class RabbitMqExportConsumer
 
         $result = $this->handleWake();
         $channel->basic_ack($message->getDeliveryTag());
+
+        // One handle is enough — ack-drop the rest so delayed-wake storms cannot form.
+        $dropped = 0;
+        while ($dropped < 200) {
+            $extra = $channel->basic_get($queue, true);
+            if ($extra === null) {
+                break;
+            }
+            $dropped++;
+        }
+
         $channel->close();
 
         return [
-            'wakes' => 1,
+            'wakes' => 1 + $dropped,
             'processed' => $result['processed'],
             'delayed' => $result['delayed'] ? 1 : 0,
         ];
@@ -73,19 +85,48 @@ class RabbitMqExportConsumer
 
         $delayed = false;
         if ($processed === 0 && $this->exportRepository->hasPending()) {
-            $this->wake->publishDelayedWake(['type' => 'export.wake.delayed']);
-            $delayed = true;
-            $this->metrics->incrementCounter('eventflow_exports_wake_total', ['result' => 'delayed']);
+            $delayed = $this->publishCoalescedWake('delayed');
+            $this->metrics->incrementCounter('eventflow_exports_wake_total', [
+                'result' => $delayed ? 'delayed' : 'delayed_coalesced',
+            ]);
         } elseif ($processed > 0) {
             $this->metrics->incrementCounter('eventflow_exports_wake_total', ['result' => 'drained']);
             if ($this->exportRepository->hasPending()) {
-                $this->wake->publishWake(['type' => 'export.wake.continue']);
+                $this->publishCoalescedWake('continue');
             }
         } else {
             $this->metrics->incrementCounter('eventflow_exports_wake_total', ['result' => 'idle']);
         }
 
         return ['processed' => $processed, 'delayed' => $delayed];
+    }
+
+    /**
+     * Prevent 6 workers × N wakes from republishing the same signal.
+     */
+    private function publishCoalescedWake(string $kind): bool
+    {
+        $ttlMs = $kind === 'delayed'
+            ? max(500, (int) config('eventflow.exports.rabbitmq.retry_ttl_ms', 3000))
+            : max(50, (int) config('eventflow.exports.wake_coalesce_ms', 250));
+
+        $published = Cache::add(
+            'eventflow:exports:wake:'.$kind,
+            1,
+            now()->addMilliseconds($ttlMs),
+        );
+
+        if (! $published) {
+            return false;
+        }
+
+        if ($kind === 'delayed') {
+            $this->wake->publishDelayedWake(['type' => 'export.wake.delayed']);
+        } else {
+            $this->wake->publishWake(['type' => 'export.wake.'.$kind]);
+        }
+
+        return true;
     }
 
     private function connection(): AMQPStreamConnection

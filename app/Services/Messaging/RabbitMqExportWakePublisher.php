@@ -3,6 +3,7 @@
 namespace App\Services\Messaging;
 
 use App\Contracts\ExportWakePublisher;
+use PhpAmqpLib\Channel\AMQPChannel;
 use PhpAmqpLib\Connection\AMQPStreamConnection;
 use PhpAmqpLib\Message\AMQPMessage;
 use PhpAmqpLib\Wire\AMQPTable;
@@ -17,9 +18,17 @@ class RabbitMqExportWakePublisher implements ExportWakePublisher
 
     private ?AMQPStreamConnection $connection = null;
 
+    private ?AMQPChannel $channel = null;
+
+    private bool $topologyReady = false;
+
     public function declareTopology(): void
     {
-        $channel = $this->connection()->channel();
+        if ($this->topologyReady) {
+            return;
+        }
+
+        $channel = $this->channel();
 
         $main = (string) config('eventflow.exports.rabbitmq.queue', 'exports.requested');
         $retry = (string) config('eventflow.exports.rabbitmq.retry_queue', 'exports.requested.retry');
@@ -37,7 +46,7 @@ class RabbitMqExportWakePublisher implements ExportWakePublisher
         $channel->queue_declare($main, false, true, false, false);
         $channel->queue_bind($main, self::EXCHANGE, self::ROUTING_WAKE);
 
-        $channel->close();
+        $this->topologyReady = true;
     }
 
     public function publishWake(array $body = []): void
@@ -52,6 +61,12 @@ class RabbitMqExportWakePublisher implements ExportWakePublisher
 
     public function __destruct()
     {
+        try {
+            $this->channel?->close();
+        } catch (\Throwable) {
+            // ignore shutdown noise
+        }
+
         if ($this->connection?->isConnected()) {
             $this->connection->close();
         }
@@ -64,7 +79,6 @@ class RabbitMqExportWakePublisher implements ExportWakePublisher
     {
         $this->declareTopology();
 
-        $channel = $this->connection()->channel();
         $payload = json_encode($body, JSON_THROW_ON_ERROR);
 
         $message = new AMQPMessage($payload, [
@@ -72,8 +86,18 @@ class RabbitMqExportWakePublisher implements ExportWakePublisher
             'delivery_mode' => AMQPMessage::DELIVERY_MODE_PERSISTENT,
         ]);
 
-        $channel->basic_publish($message, self::EXCHANGE, $routingKey);
-        $channel->close();
+        $this->channel()->basic_publish($message, self::EXCHANGE, $routingKey);
+    }
+
+    private function channel(): AMQPChannel
+    {
+        if ($this->channel !== null && $this->connection?->isConnected()) {
+            return $this->channel;
+        }
+
+        $this->channel = $this->connection()->channel();
+
+        return $this->channel;
     }
 
     private function connection(): AMQPStreamConnection
@@ -81,6 +105,9 @@ class RabbitMqExportWakePublisher implements ExportWakePublisher
         if ($this->connection?->isConnected()) {
             return $this->connection;
         }
+
+        $this->topologyReady = false;
+        $this->channel = null;
 
         $this->connection = new AMQPStreamConnection(
             (string) config('eventflow.rabbitmq.host'),

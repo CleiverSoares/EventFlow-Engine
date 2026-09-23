@@ -203,7 +203,7 @@ Demo API keys (after seed) are commented in `.env.example`.
 | Service | URL |
 |---------|-----|
 | Grafana | http://localhost:3000 (`admin` / `admin`) — dashboards Phase 1, Phase 2, **CRM Exports Fairness** |
-| Exports lab board | http://localhost:8000/lab/exports (Reverb WebSocket) |
+| Exports lab board | http://localhost:8000/lab/exports (Reverb WebSocket; fairness live) |
 | Prometheus | http://localhost:9090 |
 | Jaeger | http://localhost:16686 |
 | RabbitMQ UI | http://localhost:15672 (`eventflow` / `eventflow`) |
@@ -242,12 +242,47 @@ Workers + API run in Docker (PHP 64-bit). Host `php artisan serve` is fine for s
 
 ### 4b. Multi-tenant CRM exports (fairness demo)
 
-Heavy `commercial_dossier` JOINs with a whale + light tenants. Fair worker: **RabbitMQ wake** + **Postgres claim** by plan cap (small tenants are not blocked by one huge export).
+Heavy `commercial_dossier` JOINs with a **whale** tenant (enterprise, ~2000 deals) and **light** tenants (basic/pro, ~100 deals).
+
+#### Why basic/pro are not swallowed by enterprise
+
+RabbitMQ does **not** pick who runs. It only sends a **wake** (“there is work”) on `exports.requested`. Who runs is decided by the **Postgres claim** (`claimNextFair`):
+
+1. **Only so many per plan** — max exports in `PROCESSING` at once (lab defaults):
+   - `basic` → 3  
+   - `pro` → 5  
+   - `enterprise` → 4  
+   - **global** → 16 (all tenants combined)  
+   Whale at cap (e.g. already 4 processing) → **no worker takes another whale** until one finishes; slots stay available for light.
+2. **Light preference** — among `PENDING` still under cap: order **basic → pro → enterprise**, then oldest. Enterprise does not jump the line just for being the whale.
+3. **Parallel workers** — `FOR UPDATE SKIP LOCKED` so workers do not serialize on the same row set.
+
+The enterprise JOIN can still take seconds; the point is it **cannot monopolize every worker**. Light keeps completing under contention.
+
+Tune caps: `EVENTFLOW_EXPORT_MAX_PROCESSING_BASIC|PRO|ENTERPRISE|GLOBAL` in `.env`.
+
+
+#### What this architecture is for (and what it is not)
+
+| Solves | Does not solve alone |
+|---|---|
+| API stays cheap (`202` in ~tens–hundreds of ms) under export load | The JOIN/CSV itself (whale still costs seconds) |
+| System does not collapse when RPS ≫ processing capacity | Queue wait if you intentionally overload (lab demo) |
+| Multi-tenant fairness under one heavy tenant | Instant report delivery without more workers / smaller reports |
+
+Async accept ≠ instant download. The client still waits for processing; the platform stays up and fair while that happens.
+
+#### Live lab board
+
+http://localhost:8000/lab/exports — one snapshot on load, then **Laravel Reverb** WebSocket (`exports.lab` / `export.updated`). No Alpine polling. Needs `reverb` + `queue-exports-broadcast` (broadcast is queued so POST does not wait on WebSocket).
+
+#### Run
 
 ```bash
 php artisan migrate
 php artisan eventflow:seed-crm-load --whale=2000 --light=100
-docker compose up -d api process-exports
+docker compose up -d api process-exports process-exports-b process-exports-c process-exports-d process-exports-e process-exports-f queue-exports-broadcast reverb
+npm.cmd run build
 
 k6 run -o experimental-prometheus-rw ^
   -e K6_PROMETHEUS_RW_SERVER_URL=http://127.0.0.1:9090/api/v1/write ^
@@ -255,10 +290,11 @@ k6 run -o experimental-prometheus-rw ^
   k6/exports-multi-tenant.js
 ```
 
-Grafana: **EventFlow CRM Exports Fairness** (queue wait by plan). RabbitMQ UI: queue `exports.requested` (wake only — claim stays fair in Postgres).
+Demo keys (from seed): `ef_export_whale_key`, `ef_export_light_a_key`, `ef_export_light_b_key`.
 
-Live board (WebSocket via Reverb — **no polling**): http://localhost:8000/lab/exports  
-(`docker compose up -d api process-exports reverb` + `npm run build`)
+Grafana: **EventFlow CRM Exports Fairness** (accept vs completed, queue wait by plan, process duration, accept latency). RabbitMQ UI: `exports.requested` should stay a thin wake queue — not a per-export work queue.
+
+Caps / coalesce (beyond the numbers above): `EVENTFLOW_EXPORT_WAKE_COALESCE_MS` (see `.env.example`).
 
 Runbook: [`k6/README.md`](k6/README.md) → **Multi-tenant CRM exports**.
 

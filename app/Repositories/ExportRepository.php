@@ -138,10 +138,11 @@ class ExportRepository
             $pending = Export::query()
                 ->where('status', ExportStatus::Pending)
                 ->orderBy('created_at')
-                ->limit(50);
+                ->limit(80);
 
             if (DB::getDriverName() !== 'sqlite') {
-                $pending->lockForUpdate();
+                // Parallel workers must not serialize on the same row set.
+                $pending->lock('FOR UPDATE SKIP LOCKED');
             }
 
             /** @var Collection<int, Export> $candidates */
@@ -153,6 +154,7 @@ class ExportRepository
             $tenantIds = $candidates->pluck('tenant_id')->unique()->values();
             $tenants = Tenant::query()->whereIn('id', $tenantIds)->get()->keyBy('id');
 
+            $eligible = [];
             foreach ($candidates as $export) {
                 /** @var Tenant|null $tenant */
                 $tenant = $tenants->get($export->tenant_id);
@@ -165,15 +167,36 @@ class ExportRepository
                     continue;
                 }
 
-                $export->forceFill([
-                    'status' => ExportStatus::Processing,
-                    'started_at' => now(),
-                ])->save();
-
-                return $export->refresh();
+                $eligible[] = ['export' => $export, 'tenant' => $tenant];
             }
 
-            return null;
+            if ($eligible === []) {
+                return null;
+            }
+
+            usort($eligible, function (array $left, array $right): int {
+                $planRank = static fn (TenantPlan $plan): int => match ($plan) {
+                    TenantPlan::Basic => 0,
+                    TenantPlan::Pro => 1,
+                    TenantPlan::Enterprise => 2,
+                };
+
+                $byPlan = $planRank($left['tenant']->plan) <=> $planRank($right['tenant']->plan);
+                if ($byPlan !== 0) {
+                    return $byPlan;
+                }
+
+                return $left['export']->created_at <=> $right['export']->created_at;
+            });
+
+            /** @var Export $export */
+            $export = $eligible[0]['export'];
+            $export->forceFill([
+                'status' => ExportStatus::Processing,
+                'started_at' => now(),
+            ])->save();
+
+            return $export->refresh();
         });
     }
 

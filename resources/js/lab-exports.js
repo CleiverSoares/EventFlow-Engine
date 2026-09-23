@@ -16,7 +16,13 @@ function bootExportsLab() {
             failed: initial.totals?.failed || 0,
         },
         tenants: (initial.tenants || []).map((t) => ({ ...t })),
-        recent: (initial.recent || []).map((e) => ({ ...e })),
+        recent: (initial.recent || []).map((e) => ({
+            ...e,
+            status: String(e.status || '').toLowerCase(),
+        })),
+        knownStatus: new Map(
+            (initial.recent || []).map((e) => [e.id, String(e.status || '').toLowerCase()]),
+        ),
         connected: false,
         lastEventAt: null,
     };
@@ -28,6 +34,10 @@ function bootExportsLab() {
         status: root.querySelector('[data-ws-status]'),
         lastEvent: root.querySelector('[data-last-event]'),
     };
+
+    function normalizeStatus(status) {
+        return String(status || '').toLowerCase();
+    }
 
     function ensureTenant(exportRow) {
         let tenant = state.tenants.find((t) => t.tenant_id === exportRow.tenant_id);
@@ -53,35 +63,106 @@ function bootExportsLab() {
     }
 
     function bump(counter, status, delta) {
-        if (counter[status] === undefined) {
+        const key = normalizeStatus(status);
+        if (counter[key] === undefined) {
             return;
         }
-        counter[status] = Math.max(0, (counter[status] || 0) + delta);
+        counter[key] = Math.max(0, (counter[key] || 0) + delta);
+    }
+
+    function statusRank(status) {
+        const ranks = { pending: 1, processing: 2, completed: 3, failed: 3 };
+
+        return ranks[normalizeStatus(status)] ?? 0;
+    }
+
+    let snapshotRefreshTimer = null;
+    let snapshotRefreshQueued = false;
+
+    function scheduleSnapshotReconcile() {
+        snapshotRefreshQueued = true;
+        if (snapshotRefreshTimer !== null) {
+            return;
+        }
+        // Rare correction only — live counters come from per-event deltas.
+        snapshotRefreshTimer = window.setTimeout(async () => {
+            snapshotRefreshTimer = null;
+            if (!snapshotRefreshQueued) {
+                return;
+            }
+            snapshotRefreshQueued = false;
+            try {
+                const response = await fetch('/lab/exports/snapshot', { headers: { Accept: 'application/json' } });
+                if (!response.ok) {
+                    return;
+                }
+                const data = await response.json();
+                state.totals = {
+                    pending: data.totals?.pending || 0,
+                    processing: data.totals?.processing || 0,
+                    completed: data.totals?.completed || 0,
+                    failed: data.totals?.failed || 0,
+                };
+                state.tenants = (data.tenants || []).map((t) => ({ ...t }));
+                render();
+            } catch {
+                // keep delta counters
+            }
+            if (snapshotRefreshQueued) {
+                scheduleSnapshotReconcile();
+            }
+        }, 8000);
     }
 
     function applyExport(exportRow) {
-        const idx = state.recent.findIndex((r) => r.id === exportRow.id);
-        const previousStatus = idx >= 0 ? state.recent[idx].status : null;
-        const nextStatus = exportRow.status;
-        const tenant = ensureTenant(exportRow);
+        const row = { ...exportRow, status: normalizeStatus(exportRow.status) };
+        const idx = state.recent.findIndex((r) => r.id === row.id);
+        const previousStatus = state.knownStatus.get(row.id) ?? null;
+        const nextStatus = row.status;
 
-        if (previousStatus !== nextStatus) {
-            if (previousStatus) {
-                bump(state.totals, previousStatus, -1);
-                bump(tenant, previousStatus, -1);
+        if (previousStatus && statusRank(nextStatus) < statusRank(previousStatus)) {
+            return;
+        }
+
+        if (previousStatus === nextStatus) {
+            if (idx >= 0) {
+                state.recent[idx] = row;
             }
+            state.lastEventAt = new Date().toLocaleTimeString();
+            render();
+
+            return;
+        }
+
+        const tenant = ensureTenant(row);
+
+        if (previousStatus) {
+            bump(state.totals, previousStatus, -1);
+            bump(tenant, previousStatus, -1);
+            bump(state.totals, nextStatus, 1);
+            bump(tenant, nextStatus, 1);
+        } else if (nextStatus === 'pending') {
+            bump(state.totals, 'pending', 1);
+            bump(tenant, 'pending', 1);
+        } else {
+            // Missed earlier pushes: assume it left pending (already in snapshot or skipped).
+            bump(state.totals, 'pending', -1);
+            bump(tenant, 'pending', -1);
             bump(state.totals, nextStatus, 1);
             bump(tenant, nextStatus, 1);
         }
 
+        state.knownStatus.set(row.id, nextStatus);
+
         if (idx >= 0) {
-            state.recent[idx] = exportRow;
+            state.recent[idx] = row;
         } else {
-            state.recent.unshift(exportRow);
+            state.recent.unshift(row);
         }
         state.recent = state.recent.slice(0, 50);
         state.lastEventAt = new Date().toLocaleTimeString();
         render();
+        scheduleSnapshotReconcile();
     }
 
     function render() {

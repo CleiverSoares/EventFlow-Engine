@@ -13,6 +13,7 @@ use App\Repositories\ExportRepository;
 use App\Repositories\TenantRepository;
 use App\Services\Exports\CommercialDossierExporter;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -56,15 +57,17 @@ class ExportService
             'report' => $report->value,
         ]);
 
-        $this->broadcast($export->loadMissing('tenant'));
-
         $runInline = $sync || (string) config('eventflow.exports.mode', 'async') === 'sync';
 
         if ($runInline) {
+            $this->broadcast($export->loadMissing('tenant'));
             $this->process($export);
             $export = $export->refresh();
         } else {
+            // Coalesced wake before broadcast — Rabbit must not block the board path either,
+            // but wake is the one that was saturating the broker under load.
             $this->wakeWorkers($export);
+            $this->broadcast($export->loadMissing('tenant'));
         }
 
         return ['export' => $export, 'replay' => false];
@@ -144,12 +147,23 @@ class ExportService
 
     private function wakeWorkers(Export $export): void
     {
+        $coalesceMs = (int) config('eventflow.exports.wake_coalesce_ms', 250);
+        if ($coalesceMs > 0) {
+            $published = Cache::add(
+                'eventflow:exports:wake_coalesce',
+                1,
+                now()->addMilliseconds(max(50, $coalesceMs)),
+            );
+            if (! $published) {
+                $this->metrics->incrementCounter('eventflow_exports_wake_published_total', ['result' => 'coalesced']);
+
+                return;
+            }
+        }
+
         try {
-            $this->wake->publishWake([
-                'type' => 'export.wake',
-                'export_id' => $export->id,
-                'tenant_id' => $export->tenant_id,
-            ]);
+            // Signal only — fair claim stays in Postgres (no per-export body).
+            $this->wake->publishWake(['type' => 'export.wake']);
             $this->metrics->incrementCounter('eventflow_exports_wake_published_total', ['result' => 'ok']);
         } catch (Throwable $exception) {
             Log::warning('Export wake publish failed; worker idle-poll will catch up.', [

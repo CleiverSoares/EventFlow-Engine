@@ -5,11 +5,11 @@ namespace App\Events;
 use App\Models\Export;
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
-use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
-class ExportUpdated implements ShouldBroadcastNow
+class ExportUpdated implements ShouldBroadcast
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
@@ -26,6 +26,11 @@ class ExportUpdated implements ShouldBroadcastNow
     public function broadcastAs(): string
     {
         return 'export.updated';
+    }
+
+    public function broadcastQueue(): string
+    {
+        return (string) config('eventflow.exports.broadcast_queue', 'exports.broadcast');
     }
 
     /**
@@ -48,7 +53,7 @@ class ExportUpdated implements ShouldBroadcastNow
                 'plan' => $this->export->tenant?->plan?->value ?? $this->export->tenant?->plan,
                 'api_key' => $this->export->tenant?->api_key,
                 'report' => $this->export->report->value,
-                'status' => $this->export->status->value,
+                'status' => strtolower($this->export->status->value),
                 'row_count' => $this->export->row_count,
                 'wait_ms' => $waitMs,
                 'created_at' => $this->export->created_at?->toIso8601String(),
