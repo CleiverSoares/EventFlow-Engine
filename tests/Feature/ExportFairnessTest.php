@@ -54,6 +54,35 @@ class ExportFairnessTest extends TestCase
         $this->assertSame(ExportStatus::Processing, $claimed->status);
     }
 
+    public function test_claim_prefers_light_plan_when_whale_also_under_cap(): void
+    {
+        $whale = Tenant::factory()->create(['plan' => TenantPlan::Enterprise]);
+        $light = Tenant::factory()->create(['plan' => TenantPlan::Basic]);
+
+        config([
+            'eventflow.exports.max_processing_global' => 8,
+            'eventflow.exports.max_processing_enterprise' => 4,
+            'eventflow.exports.max_processing_basic' => 2,
+        ]);
+
+        Export::factory()->create([
+            'tenant_id' => $whale->id,
+            'status' => ExportStatus::Pending,
+            'created_at' => now()->subMinutes(10),
+        ]);
+
+        $lightPending = Export::factory()->create([
+            'tenant_id' => $light->id,
+            'status' => ExportStatus::Pending,
+            'created_at' => now()->subMinute(),
+        ]);
+
+        $claimed = app(ExportRepository::class)->claimNextFair();
+
+        $this->assertNotNull($claimed);
+        $this->assertSame($lightPending->id, $claimed->id);
+    }
+
     public function test_seed_creates_multi_table_rows_for_tenant(): void
     {
         $tenant = Tenant::factory()->create();

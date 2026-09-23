@@ -37,6 +37,7 @@
         <env name="EVENTFLOW_METRICS_TOKEN" value="test-metrics-token" force="true"/>
         <env name="EVENTFLOW_HEALTH_CHECK_REDIS" value="false" force="true"/>
         <env name="EVENTFLOW_HEALTH_CHECK_RABBITMQ" value="false" force="true"/>
+        <env name="BROADCAST_CONNECTION" value="null" force="true"/>
         <env name="REDIS_CLIENT" value="predis" force="true"/>
     </php>
 </phpunit>

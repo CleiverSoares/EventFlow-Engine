@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Contracts\ExportWakePublisher;
 use App\Enums\ExportReport;
 use App\Enums\ExportStatus;
+use App\Events\ExportUpdated;
 use App\Models\Export;
 use App\Models\Tenant;
 use App\Observability\InMemoryMetricsRegistry;
@@ -12,6 +13,7 @@ use App\Repositories\ExportRepository;
 use App\Repositories\TenantRepository;
 use App\Services\Exports\CommercialDossierExporter;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -58,10 +60,14 @@ class ExportService
         $runInline = $sync || (string) config('eventflow.exports.mode', 'async') === 'sync';
 
         if ($runInline) {
+            $this->broadcast($export->loadMissing('tenant'));
             $this->process($export);
             $export = $export->refresh();
         } else {
+            // Coalesced wake before broadcast — Rabbit must not block the board path either,
+            // but wake is the one that was saturating the broker under load.
             $this->wakeWorkers($export);
+            $this->broadcast($export->loadMissing('tenant'));
         }
 
         return ['export' => $export, 'replay' => false];
@@ -74,6 +80,8 @@ class ExportService
             return null;
         }
 
+        $this->broadcast($export);
+
         return $this->process($export);
     }
 
@@ -81,6 +89,7 @@ class ExportService
     {
         if ($export->status === ExportStatus::Pending) {
             $export = $this->exports->markProcessing($export);
+            $this->broadcast($export);
         }
 
         $tenant = $this->tenants->findById($export->tenant_id);
@@ -105,11 +114,13 @@ class ExportService
 
             $completed = $this->exports->markCompleted($export, $result['path'], $result['rows']);
             $this->recordProcessOutcome($plan, 'completed', $started);
+            $this->broadcast($completed);
 
             return $completed;
         } catch (Throwable $exception) {
             $failed = $this->exports->markFailed($export, $exception->getMessage());
             $this->recordProcessOutcome($plan, 'failed', $started);
+            $this->broadcast($failed);
 
             return $failed;
         }
@@ -125,14 +136,34 @@ class ExportService
         return $this->exports->findForTenant($tenantId, $id);
     }
 
-    private function wakeWorkers(Export $export): void
+    private function broadcast(Export $export): void
     {
         try {
-            $this->wake->publishWake([
-                'type' => 'export.wake',
-                'export_id' => $export->id,
-                'tenant_id' => $export->tenant_id,
-            ]);
+            ExportUpdated::dispatch($export);
+        } catch (Throwable $exception) {
+            Log::debug('Export broadcast skipped', ['error' => $exception->getMessage()]);
+        }
+    }
+
+    private function wakeWorkers(Export $export): void
+    {
+        $coalesceMs = (int) config('eventflow.exports.wake_coalesce_ms', 250);
+        if ($coalesceMs > 0) {
+            $published = Cache::add(
+                'eventflow:exports:wake_coalesce',
+                1,
+                now()->addMilliseconds(max(50, $coalesceMs)),
+            );
+            if (! $published) {
+                $this->metrics->incrementCounter('eventflow_exports_wake_published_total', ['result' => 'coalesced']);
+
+                return;
+            }
+        }
+
+        try {
+            // Signal only — fair claim stays in Postgres (no per-export body).
+            $this->wake->publishWake(['type' => 'export.wake']);
             $this->metrics->incrementCounter('eventflow_exports_wake_published_total', ['result' => 'ok']);
         } catch (Throwable $exception) {
             Log::warning('Export wake publish failed; worker idle-poll will catch up.', [

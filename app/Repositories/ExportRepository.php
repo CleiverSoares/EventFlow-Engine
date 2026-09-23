@@ -82,6 +82,49 @@ class ExportRepository
     }
 
     /**
+     * @return array{pending: int, processing: int, completed: int, failed: int}
+     */
+    public function countByStatus(): array
+    {
+        $rows = Export::query()
+            ->selectRaw('status, count(*) as aggregate')
+            ->groupBy('status')
+            ->pluck('aggregate', 'status');
+
+        return [
+            'pending' => (int) ($rows[ExportStatus::Pending->value] ?? 0),
+            'processing' => (int) ($rows[ExportStatus::Processing->value] ?? 0),
+            'completed' => (int) ($rows[ExportStatus::Completed->value] ?? 0),
+            'failed' => (int) ($rows[ExportStatus::Failed->value] ?? 0),
+        ];
+    }
+
+    /**
+     * @return Collection<int, Export>
+     */
+    public function recentForLab(int $limit = 50): Collection
+    {
+        return Export::query()
+            ->with('tenant:id,name,plan,api_key')
+            ->orderByDesc('created_at')
+            ->limit($limit)
+            ->get();
+    }
+
+    /**
+     * @return Collection<int, object{tenant_id: string, name: string, plan: string, api_key: string, status: string, aggregate: int}>
+     */
+    public function statusBreakdownByTenant(): Collection
+    {
+        return DB::table('exports')
+            ->join('tenants', 'tenants.id', '=', 'exports.tenant_id')
+            ->selectRaw('tenants.id as tenant_id, tenants.name, tenants.plan, tenants.api_key, exports.status, count(*) as aggregate')
+            ->groupBy('tenants.id', 'tenants.name', 'tenants.plan', 'tenants.api_key', 'exports.status')
+            ->orderBy('tenants.name')
+            ->get();
+    }
+
+    /**
      * Fair claim: prefer tenants under their plan cap with the oldest PENDING export.
      */
     public function claimNextFair(): ?Export
@@ -95,10 +138,11 @@ class ExportRepository
             $pending = Export::query()
                 ->where('status', ExportStatus::Pending)
                 ->orderBy('created_at')
-                ->limit(50);
+                ->limit(80);
 
             if (DB::getDriverName() !== 'sqlite') {
-                $pending->lockForUpdate();
+                // Parallel workers must not serialize on the same row set.
+                $pending->lock('FOR UPDATE SKIP LOCKED');
             }
 
             /** @var Collection<int, Export> $candidates */
@@ -110,6 +154,7 @@ class ExportRepository
             $tenantIds = $candidates->pluck('tenant_id')->unique()->values();
             $tenants = Tenant::query()->whereIn('id', $tenantIds)->get()->keyBy('id');
 
+            $eligible = [];
             foreach ($candidates as $export) {
                 /** @var Tenant|null $tenant */
                 $tenant = $tenants->get($export->tenant_id);
@@ -122,15 +167,36 @@ class ExportRepository
                     continue;
                 }
 
-                $export->forceFill([
-                    'status' => ExportStatus::Processing,
-                    'started_at' => now(),
-                ])->save();
-
-                return $export->refresh();
+                $eligible[] = ['export' => $export, 'tenant' => $tenant];
             }
 
-            return null;
+            if ($eligible === []) {
+                return null;
+            }
+
+            usort($eligible, function (array $left, array $right): int {
+                $planRank = static fn (TenantPlan $plan): int => match ($plan) {
+                    TenantPlan::Basic => 0,
+                    TenantPlan::Pro => 1,
+                    TenantPlan::Enterprise => 2,
+                };
+
+                $byPlan = $planRank($left['tenant']->plan) <=> $planRank($right['tenant']->plan);
+                if ($byPlan !== 0) {
+                    return $byPlan;
+                }
+
+                return $left['export']->created_at <=> $right['export']->created_at;
+            });
+
+            /** @var Export $export */
+            $export = $eligible[0]['export'];
+            $export->forceFill([
+                'status' => ExportStatus::Processing,
+                'started_at' => now(),
+            ])->save();
+
+            return $export->refresh();
         });
     }
 
